@@ -609,6 +609,36 @@ function findField(fields, keywords){
   return fields.findIndex(f => keywords.some(kw => f.includes(kw)));
 }
 
+// 證交所 MI_INDEX 回傳格式有兩種可能：
+// 1) 新版：{ tables: [ {fields:[...], data:[...]}, ... ] }
+// 2) 舊版（較常見）：{ fields9:[...], data9:[...], fields8:[...], data8:[...], ... } 沒有 tables 陣列，
+//    而是用 fields數字/data數字 成對出現，數字依日期可能不同（fields8/data8 或 fields9/data9 都有出現過）。
+// 這裡兩種都嘗試，找出「同時含有 證券代號 和 收盤」欄位的那一組。
+function extractStockTable(payload){
+  if(Array.isArray(payload.tables)){
+    const hit = payload.tables.find(t =>
+      Array.isArray(t.fields) &&
+      t.fields.some(f => f.includes('證券代號')) &&
+      t.fields.some(f => f.includes('收盤'))
+    );
+    if(hit) return hit;
+  }
+  // 掃描所有 fields數字 / data數字 成對的 key
+  const fieldKeys = Object.keys(payload).filter(k => /^fields\d*$/.test(k));
+  for(const fk of fieldKeys){
+    const suffix = fk.slice(6); // 'fields9' -> '9'
+    const dk = 'data' + suffix;
+    const fields = payload[fk];
+    const data = payload[dk];
+    if(Array.isArray(fields) && Array.isArray(data) &&
+       fields.some(f => f.includes('證券代號')) &&
+       fields.some(f => f.includes('收盤'))){
+      return { fields, data };
+    }
+  }
+  return null;
+}
+
 async function autoFetch(){
   const dateVal = document.getElementById('dateInput').value; // YYYY-MM-DD
   if(!dateVal){
@@ -637,12 +667,7 @@ async function autoFetch(){
     return;
   }
 
-  const tables = payload.tables || [];
-  const target = tables.find(t =>
-    Array.isArray(t.fields) &&
-    t.fields.some(f => f.includes('證券代號')) &&
-    t.fields.some(f => f.includes('收盤'))
-  );
+  const target = extractStockTable(payload);
 
   if(!target){
     setStatus('連線成功，但找不到個股收盤行情表，可能是非交易日或假日，請換一個日期再試。', 'error');
