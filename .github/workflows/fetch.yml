@@ -1,0 +1,33 @@
+name: Daily TWSE Fetch
+
+on:
+  schedule:
+    # 06:30 UTC = �蝱������ 14:30嚗�𤣰�𥿢敺䕘�㚁�屸�曹����曹�䈑�㇎TC���曹����曹�𥪜�齿�匧蝱�����㯄���糓�曹����曹�娍𡟺銝𠺪��
+    - cron: '30 6 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Fetch TWSE data
+        run: python3 fetch_twse.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/latest.json
+          git diff --quiet --cached || git commit -m "�䌊��閙凒�鰵霅劐漱��鞈��� $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
