@@ -468,6 +468,7 @@ function renderCards(list, day, rangeN){
         <div class="card-head">
           <span class="name">${c.name}</span><span class="code">${c.code}</span>
         </div>
+        <div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;">依 ${day} 收盤資料推算，預測下一個交易日</div>
         <div class="pillrow">
           <span class="pill pill-pct down">▼${fmt(Math.abs(c.pct),2)}%</span>
           <span class="pill pill-vol">量 ${c.lots.toLocaleString(undefined,{maximumFractionDigits:0})} 張</span>
