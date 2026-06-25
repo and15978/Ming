@@ -144,7 +144,7 @@ def fetch_by_date_via_mi_index(date_str):
     return stocks, f"{y}-{m}-{d}"
 
 
-def save(stocks, date_iso, source):
+def save(stocks, date_iso, source, update_latest):
     os.makedirs("data", exist_ok=True)
     out = {
         "fetched_at_utc": datetime.datetime.utcnow().isoformat() + "Z",
@@ -153,22 +153,26 @@ def save(stocks, date_iso, source):
         "count": len(stocks),
         "stocks": stocks,
     }
-    with open("data/latest.json", "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False)
+    if update_latest:
+        with open("data/latest.json", "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False)
     if date_iso:
         with open(f"data/{date_iso}.json", "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False)
-    print(f"OK，交易日 {date_iso}，共 {len(stocks)} 檔，已寫入 data/latest.json 與 data/{date_iso}.json")
+    print(f"OK，交易日 {date_iso}，共 {len(stocks)} 檔，已寫入 data/{date_iso}.json"
+          + ("（同時更新 data/latest.json）" if update_latest else "（未更動 data/latest.json）"))
 
 
 def main():
     date_arg = sys.argv[1].strip() if len(sys.argv) > 1 and sys.argv[1].strip() else None
     if date_arg:
+        # 指定歷史日期：只回補那一天自己的檔案，絕對不要動 latest.json
         stocks, date_iso = fetch_by_date_via_mi_index(date_arg)
-        save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg))
+        save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
     else:
+        # 沒指定日期：抓「目前最新」，這才是該更新 latest.json 的時候
         stocks, date_iso = fetch_latest_via_openapi()
-        save(stocks, date_iso, OPENAPI_URL)
+        save(stocks, date_iso, OPENAPI_URL, update_latest=True)
 
 
 if __name__ == "__main__":
