@@ -199,16 +199,11 @@
         <input type="number" id="volThreshold" value="5000" step="500">
       </div>
     </div>
-    <button id="autoFetchBtn">嘗試自動抓取證交所資料（盤後official資料）</button>
+    <button id="autoFetchBtn">讀取每日自動更新資料（GitHub自動抓取，最穩定）</button>
     <button class="ghost" id="yahooRankBtn">改用 Yahoo 即時排行（盤中可用，需先啟動本地代理）</button>
-    <div class="row" style="margin-top:12px; align-items:center;">
-      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text);">
-        <input type="checkbox" id="ma5Filter" style="width:16px; height:16px;">
-        只顯示站上5日均線的個股（會多花時間，逐檔查歷史資料）
-      </label>
-    </div>
     <div class="sub" style="margin-top:8px;">
-      證交所MI_INDEX/STOCK_DAY是「盤後」才公布的官方資料，盤中（9:00~13:30）按上面那顆通常抓不到今天的資料，這是正常現象不是bug。
+      這顆改成讀取 <code>data/latest.json</code>——這個檔案由 GitHub Actions 每個交易日收盤後自動執行抓取並更新，網頁只是讀自己repo裡的靜態檔案，不會被CORS擋。
+      如果顯示「讀取失敗」，通常是還沒手動觸發過第一次，到 repo 的 <b>Actions</b> 分頁找 <b>Daily TWSE Fetch</b> → <b>Run workflow</b> 跑一次即可。
       盤中要看當下排行，請按下面這顆改用Yahoo股市排行（必須先啟動 cdp_proxy_server.py，因為要靠它解析網頁、繞過CORS）。
     </div>
     <div id="statusArea"></div>
@@ -393,11 +388,6 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
     const queryBadge = r.queryTimeLabel
       ? `<span class="sc-badge">查詢時間 ${r.queryTimeLabel}</span>`
       : '';
-    let ma5Badge = '';
-    if(r.ma5 !== undefined && r.ma5 !== null){
-      const aboveCls = r.aboveMa5 ? 'star' : 'vol';
-      ma5Badge = `<span class="sc-badge ${aboveCls}">MA5 ${r.ma5.toFixed(2)} ${r.aboveMa5 ? '↑站上均線' : '↓在均線下'}</span>`;
-    }
     html += `
     <div class="scenario-card ${colorClass}" id="card-${uid}">
       <div class="sc-title">${r.name} <span class="sc-code">${r.code}</span></div>
@@ -405,7 +395,6 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
         <span class="sc-badge">▲${r.pct.toFixed(2)}%</span>
         <span class="sc-badge vol">量 ${r.volLots.toLocaleString()} 張</span>
         <span class="sc-badge star" id="${uid}-stars">${r.stars}</span>
-        ${ma5Badge}
         ${metaBadge}
         ${queryBadge}
       </div>
@@ -621,96 +610,85 @@ function findField(fields, keywords){
   return fields.findIndex(f => keywords.some(kw => f.includes(kw)));
 }
 
-// 如果使用者勾選了「只顯示站上5日均線」，逐檔抓歷史資料算MA5並過濾
-// 算不出來(抓不到歷史資料)的個股，保守不排除，避免漏掉真正符合條件的股票
-async function applyMA5FilterIfEnabled(results, dateVal){
-  const checkbox = document.getElementById('ma5Filter');
-  if(!checkbox || !checkbox.checked || !results.length) return results;
-
-  const filtered = [];
-  for(let i = 0; i < results.length; i++){
-    const r = results[i];
-    setStatus(`正在計算5日均線... (${i+1}/${results.length}) ${r.name}`, 'loading');
-    try{
-      const ma5 = await computeMA5(r.code, dateVal);
-      r.ma5 = ma5;
-      r.aboveMa5 = (ma5 !== null) ? (r.close > ma5) : null;
-      if(ma5 === null || r.close > ma5) filtered.push(r);
-    } catch(err){
-      r.ma5 = null;
-      r.aboveMa5 = null;
-      filtered.push(r);
+// 證交所 MI_INDEX 回傳格式有兩種可能：
+// 1) 新版：{ tables: [ {fields:[...], data:[...]}, ... ] }
+// 2) 舊版（較常見）：{ fields9:[...], data9:[...], fields8:[...], data8:[...], ... } 沒有 tables 陣列，
+//    而是用 fields數字/data數字 成對出現，數字依日期可能不同（fields8/data8 或 fields9/data9 都有出現過）。
+// 這裡兩種都嘗試，找出「同時含有 證券代號 和 收盤」欄位的那一組。
+function extractStockTable(payload){
+  if(Array.isArray(payload.tables)){
+    const hit = payload.tables.find(t =>
+      Array.isArray(t.fields) &&
+      t.fields.some(f => f.includes('證券代號')) &&
+      t.fields.some(f => f.includes('收盤'))
+    );
+    if(hit) return hit;
+  }
+  // 掃描所有 fields數字 / data數字 成對的 key
+  const fieldKeys = Object.keys(payload).filter(k => /^fields\d*$/.test(k));
+  for(const fk of fieldKeys){
+    const suffix = fk.slice(6); // 'fields9' -> '9'
+    const dk = 'data' + suffix;
+    const fields = payload[fk];
+    const data = payload[dk];
+    if(Array.isArray(fields) && Array.isArray(data) &&
+       fields.some(f => f.includes('證券代號')) &&
+       fields.some(f => f.includes('收盤'))){
+      return { fields, data };
     }
   }
-  return filtered;
+  return null;
 }
 
 async function autoFetch(){
-  const dateVal = document.getElementById('dateInput').value; // YYYY-MM-DD
-  if(!dateVal){
-    setStatus('請先選擇日期。', 'error');
-    return;
-  }
-  const dateStr = dateVal.replace(/-/g, '');
   const pctThreshold = parseFloat(document.getElementById('pctThreshold').value) || 0;
   const volThreshold = parseFloat(document.getElementById('volThreshold').value) || 0;
+  const dateVal = document.getElementById('dateInput') ? document.getElementById('dateInput').value : '';
 
-  setStatus('正在嘗試連線證交所資料...', 'loading');
+  let payload, usedFallback = false;
 
-  const url = `https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date=${dateStr}&type=ALLBUT0999`;
-  const proxyPath = `/api/mi?date=${dateStr}`;
-
-  let payload, viaProxy;
-  try{
-    const result = await fetchJsonWithProxyFallback(url, proxyPath);
-    payload = result.data;
-    viaProxy = result.viaProxy;
-  } catch(err){
-    setStatus(
-      `自動抓取失敗：${err.message || err}<br>請改用下方「手動貼上資料」的備用方案。`,
-      'error'
-    );
-    return;
+  if(dateVal){
+    setStatus(`正在讀取 ${dateVal} 的存檔...`, 'loading');
+    try{
+      const resp = await fetch(`data/${dateVal}.json`, {cache: 'no-store'});
+      if(resp.ok) payload = await resp.json();
+    } catch(e){ /* 該日期還沒存檔，往下退回latest */ }
   }
 
-  const tables = payload.tables || [];
-  const target = tables.find(t =>
-    Array.isArray(t.fields) &&
-    t.fields.some(f => f.includes('證券代號')) &&
-    t.fields.some(f => f.includes('收盤'))
-  );
-
-  if(!target){
-    setStatus('連線成功，但找不到個股收盤行情表，可能是非交易日或假日，請換一個日期再試。', 'error');
-    return;
+  if(!payload){
+    if(dateVal) usedFallback = true;
+    setStatus('正在讀取最新一次自動更新的資料檔...', 'loading');
+    try{
+      const resp = await fetch('data/latest.json', {cache: 'no-store'});
+      if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      payload = await resp.json();
+    } catch(err){
+      setStatus(
+        `讀取自動更新資料失敗：${err.message || err}<br>`+
+        `可能是 GitHub Actions 還沒第一次執行。請到 repo 的 Actions 分頁，選「Daily TWSE Fetch」→「Run workflow」手動跑一次（如果要回補某一天的歷史資料，在跳出來的 date 欄位填 YYYYMMDD），等它跑完（約30秒~1分鐘）再重新整理這頁試一次。或先用下方「手動貼上資料」。`,
+        'error'
+      );
+      return;
+    }
   }
 
-  const fields = target.fields;
-  const idxCode = findField(fields, ['證券代號']);
-  const idxName = findField(fields, ['證券名稱']);
-  const idxHigh = findField(fields, ['最高價']);
-  const idxLow = findField(fields, ['最低價']);
-  const idxClose = findField(fields, ['收盤價']);
-  const idxChange = findField(fields, ['漲跌價差']);
-  const idxSign = findField(fields, ['漲跌(+/-)', '漲跌(+-)']);
-  const idxVol = findField(fields, ['成交股數']);
+  const stocks = payload.stocks || [];
+  if(stocks.length === 0){
+    setStatus('資料檔是空的，請確認 GitHub Actions 是否執行成功（到 repo 的 Actions 分頁看有沒有綠色勾勾）。', 'error');
+    return;
+  }
 
   const results = [];
   const fullList = [];
-  (target.data || []).forEach(row => {
-    const code = row[idxCode];
-    const name = row[idxName];
-    const high = parseFloat(String(row[idxHigh]).replace(/,/g, ''));
-    const low = parseFloat(String(row[idxLow]).replace(/,/g, ''));
-    const close = parseFloat(String(row[idxClose]).replace(/,/g, ''));
-    let change = parseFloat(String(row[idxChange]).replace(/,/g, ''));
-    const signRaw = idxSign >= 0 ? String(row[idxSign]) : '';
-    const volShares = parseFloat(String(row[idxVol]).replace(/,/g, ''));
+  stocks.forEach(r => {
+    const code = r.Code, name = r.Name;
+    const high = parseFloat(String(r.HighestPrice).replace(/,/g, ''));
+    const low = parseFloat(String(r.LowestPrice).replace(/,/g, ''));
+    const close = parseFloat(String(r.ClosingPrice).replace(/,/g, ''));
+    const change = parseFloat(String(r.Change).replace(/,/g, ''));
+    const volShares = parseFloat(String(r.TradeVolume).replace(/,/g, ''));
 
-    if(isNaN(close) || isNaN(high) || isNaN(low) || isNaN(change) || isNaN(volShares)) return;
-
-    if(signRaw.includes('-') || signRaw.includes('跌')) change = -Math.abs(change);
-    else change = Math.abs(change);
+    if(isNaN(close) || isNaN(high) || isNaN(low) || isNaN(change) || isNaN(volShares) || high<=0 || low<=0) return;
 
     const prevClose = close - change;
     if(!prevClose) return;
@@ -725,13 +703,14 @@ async function autoFetch(){
   });
 
   lastDataset = fullList;
-  const sourceNote = viaProxy ? '（透過本地代理伺服器）' : '（直連成功）';
-  const finalResults = await applyMA5FilterIfEnabled(results, dateVal);
-  const ma5Note = document.getElementById('ma5Filter').checked
-    ? `，其中站上5日均線 ${finalResults.length} 檔`
+  const fetchedAt = payload.fetched_at_utc ? new Date(payload.fetched_at_utc) : null;
+  const tradeDateNote = payload.trade_date ? `交易日：${payload.trade_date}　` : '';
+  const fallbackNote = usedFallback ? `（你選的 ${dateVal} 還沒有存檔，目前顯示的是最新一次的資料，要回補這天請到Actions手動跑一次並填日期）` : '';
+  const fetchedNote = fetchedAt
+    ? `（資料更新時間：${fetchedAt.toLocaleString('zh-TW', {timeZone:'Asia/Taipei'})} 台北時間）`
     : '';
-  setStatus(`抓取成功！${sourceNote}共 ${results.length} 檔符合篩選條件${ma5Note}（資料庫內共 ${fullList.length} 檔個股，可在下方查詢任一檔CDP）。`, 'ok');
-  renderResults(finalResults);
+  setStatus(`讀取成功！${tradeDateNote}${fetchedNote}${fallbackNote}<br>共 ${results.length} 檔符合篩選條件（資料庫內共 ${fullList.length} 檔個股，可在下方查詢任一檔CDP）。`, fallbackNote ? 'loading' : 'ok');
+  renderResults(results);
 }
 
 document.getElementById('autoFetchBtn').addEventListener('click', autoFetch);
@@ -777,19 +756,14 @@ async function fetchYahooRank(rankType){
     .filter(r => r.pct >= pctThreshold && r.volLots >= volThreshold)
     .map(r => buildResult(r.code, r.name, r.high, r.low, r.close, r.pct, r.volLots));
 
-  // Yahoo即時排行視為「今天」的資料，用今天日期去抓歷史資料算MA5
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const finalResults = await applyMA5FilterIfEnabled(results, todayStr);
-  const ma5Note = document.getElementById('ma5Filter').checked
-    ? `，其中站上5日均線 ${finalResults.length} 檔`
-    : '';
-
   setStatus(
-    `✓ 已透過本地代理抓到 Yahoo 即時排行，共 ${results.length} 檔符合篩選條件${ma5Note}（排行榜內共 ${fullList.length} 檔，可在下方查詢任一檔CDP）。`,
+    `✓ 已透過本地代理抓到 Yahoo 即時排行，共 ${results.length} 檔符合篩選條件（排行榜內共 ${fullList.length} 檔，可在下方查詢任一檔CDP）。`,
     'ok'
   );
-  renderResults(finalResults);
+  renderResults(results);
 }
+
+// 預設日期：今天
 (function(){
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -953,6 +927,18 @@ function setSearchStatus(msg, type){
 
 async function fetchOpenApiAll(){
   if(openApiCache) return openApiCache;
+  // 優先讀取每日自動更新的靜態檔（同站讀取，不會被CORS擋，最穩定）
+  try{
+    const resp = await fetch('data/latest.json', {cache: 'no-store'});
+    if(resp.ok){
+      const payload = await resp.json();
+      if(Array.isArray(payload.stocks) && payload.stocks.length){
+        openApiCache = payload.stocks;
+        return openApiCache;
+      }
+    }
+  }catch(e){ /* 靜態檔不存在或讀取失敗，往下走原本的直連備援 */ }
+
   const { data } = await fetchJsonWithProxyFallback(TWSE_OPENAPI_URL, '/api/all');
   openApiCache = data;
   return data;
@@ -984,63 +970,6 @@ function findFieldIndex(fields, keywords){
   return fields.findIndex(f => keywords.some(kw => f.includes(kw)));
 }
 
-// 西元日期(YYYY-MM-DD) -> 證交所常見的民國日期字串變體，用於比對 monthData 裡的「日期」欄位
-function rocDateVariants(dateStr){
-  const [y, m, d] = dateStr.split('-').map(s => parseInt(s));
-  const rocY = y - 1911;
-  return [
-    `${rocY}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`,
-    `${rocY}/${m}/${d}`,
-  ];
-}
-
-// 西元日期(YYYY-MM-DD) -> 上一個月第一天的日期字串(用來補抓上個月資料算均線)
-function prevMonthDateStr(dateStr){
-  const [y, m] = dateStr.split('-').map(s => parseInt(s));
-  let py = y, pm = m - 1;
-  if(pm === 0){ pm = 12; py = y - 1; }
-  return `${py}-${String(pm).padStart(2,'0')}-01`;
-}
-
-// 從個股歷史月資料裡，把「日期+收盤價」抽成乾淨陣列(依API回傳順序,通常是日期由舊到新)
-function parseMonthCloses(monthData){
-  const fields = monthData.fields;
-  const idxDate = findFieldIndex(fields, ['日期']);
-  const idxClose = findFieldIndex(fields, ['收盤價']);
-  return monthData.data
-    .map(row => ({ dateRaw: row[idxDate], close: parseFloat(String(row[idxClose]).replace(/,/g, '')) }))
-    .filter(r => !isNaN(r.close));
-}
-
-// 算「指定股票」在「指定日期」的5日均線(取當天+前4個交易日的收盤價平均)
-// 如果當月資料不夠5天，會自動多抓上個月補
-async function computeMA5FromMonthData(monthData, code, dateStr){
-  let closes = parseMonthCloses(monthData);
-  const targetVariants = rocDateVariants(dateStr);
-
-  let idx = closes.findIndex(c => targetVariants.includes(c.dateRaw));
-  if(idx === -1) idx = closes.length - 1; // 找不到當天就用該月最新一筆估算
-
-  if(idx < 4){
-    try{
-      const prevMonthData = await fetchStockDayHistory(code, prevMonthDateStr(dateStr));
-      const prevCloses = parseMonthCloses(prevMonthData);
-      closes = prevCloses.concat(closes);
-      idx = idx + prevCloses.length;
-    } catch(e){ /* 補抓上個月失敗就算了，用現有資料盡量算 */ }
-  }
-
-  const start = Math.max(0, idx - 4);
-  const slice = closes.slice(start, idx + 1);
-  if(!slice.length) return null;
-  return slice.reduce((sum, c) => sum + c.close, 0) / slice.length;
-}
-
-async function computeMA5(code, dateStr){
-  const monthData = await fetchStockDayHistory(code, dateStr);
-  return computeMA5FromMonthData(monthData, code, dateStr);
-}
-
 // 從整月資料裡，找出選定日期那一列；找不到就回傳最接近(最新)的一列
 function pickDayRow(monthData, targetDateStr /* YYYY-MM-DD */){
   const fields = monthData.fields;
@@ -1052,7 +981,13 @@ function pickDayRow(monthData, targetDateStr /* YYYY-MM-DD */){
   const idxChange = findFieldIndex(fields, ['漲跌價差']);
   const idxVol = findFieldIndex(fields, ['成交股數']);
 
-  const targetVariants = rocDateVariants(targetDateStr);
+  const [y, m, d] = targetDateStr.split('-').map(s => parseInt(s));
+  const rocY = y - 1911;
+  // 證交所這個API的日期格式通常是 "115/06/18"，部分情況可能沒有補零
+  const targetVariants = [
+    `${rocY}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`,
+    `${rocY}/${m}/${d}`,
+  ];
 
   let row = monthData.data.find(r => targetVariants.includes(r[idxDate]));
   let exact = true;
@@ -1138,15 +1073,6 @@ async function runSearch(){
   const built = buildResult(target.Code, target.Name, dayRow.high, dayRow.low, dayRow.close, pct, volLots);
   built.dataDateLabel = rocSlashDateToLabel(dayRow.dateRaw);
   built.queryTimeLabel = nowTimeLabel();
-
-  try{
-    const ma5 = await computeMA5FromMonthData(monthData, target.Code, dateVal);
-    built.ma5 = ma5;
-    built.aboveMa5 = (ma5 !== null) ? (dayRow.close > ma5) : null;
-  } catch(e){
-    built.ma5 = null;
-    built.aboveMa5 = null;
-  }
 
   const exactNote = dayRow.exact
     ? ''
