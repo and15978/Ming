@@ -2,12 +2,18 @@ name: Daily TWSE Fetch
 
 on:
   schedule:
-    # 06:30 UTC = �蝱������ 14:30嚗�𤣰�𥿢敺䕘�㚁���齿�务TC���曹����曹��
-    - cron: '30 6 * * 1-5'
+    # GitHub Actions ����垍�见銁蝟餌絞敹嗵�峕��虾�賣�撱嗅�𣬚�朞秐鋡怨歲�𠬍��
+    # ��隞仿�躰ㄐ��雴�憭𡁜�𧢲���㯄�䂿訜�蹱螱嚗�蘨閬��嗡葉銝�甈⊥�𣂼�蠘�穃���
+    # 銝磰�劐漱���訜��撌脩�枏�砍�憟質���辷��停�賣�枏�嚗䔶�滨鍂瘥誩予��见�閖�𠺶��
+    # (cron ����𤘪糓 UTC嚗�蝱��埈���� = UTC + 8)
+    - cron: '30 6 * * 1-5'   # �蝱��� 14:30嚗�𤣰�𥿢敺�1撠𤩺�嚗𣬚洵銝�甈∪�𡑒岫嚗�
+    - cron: '0 9 * * 1-5'    # �蝱��� 17:00嚗��蹱螱嚗�
+    - cron: '0 12 * * 1-5'   # �蝱��� 20:00嚗��蹱螱嚗�
+    - cron: '30 15 * * 1-5'  # �蝱��� 23:30嚗��蹱螱嚗𣬚策霅劐漱����憭𡁶楨銵脲���橒��
   workflow_dispatch:
     inputs:
       date:
-        description: '閬���梶�鈭斗�𤘪𠯫������嗵征=��𤘪��鰵嚗𥡝���噼�𨀣風�蟮隢见‵ YYYYMMDD嚗䔶�见� 20260623嚗�'
+        description: '閬���噼�𦦵�鈭斗�𤘪𠯫����𣬚�嗵征=��𤘪��鰵銝�蝑�嚗峕���𡁏𠯫��蠘�见‵ YYYYMMDD嚗��见� 20260623嚗�'
         required: false
         default: ''
 
@@ -34,5 +40,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
-          git diff --quiet --cached || git commit -m "�䌊��閙凒�鰵霅劐漱��鞈��� $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git diff --quiet --cached || git commit -m "�䌊��閙凒�鰵�蝱�∟���� $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
