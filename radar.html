@@ -23,7 +23,7 @@
   button{background:var(--blue); color:#fff; border:none; padding:10px 20px; border-radius:8px;
     font-size:14px; cursor:pointer; font-weight:700;}
   button:disabled{opacity:.5; cursor:not-allowed;}
-  .status{font-size:13px; color:var(--sub); margin-top:10px; line-height:1.7;}
+  .status{font-size:13px; color:var(--sub); margin-top:10px; line-height:1.7; white-space:pre-line;}
   .error{color:var(--red);}
   .progress{height:6px; background:var(--panel2); border-radius:4px; margin-top:8px; overflow:hidden; display:none;}
   .progress-bar{height:100%; background:var(--blue); width:0%; transition:width .2s;}
@@ -415,21 +415,26 @@ async function run(){
       return;
     }
 
-    statusEl.textContent = `CDP 篩出 ${candidates.length} 檔偏空候選，正在逐一抓歷史日線疊加 RSI/KD 確認（較慢，請耐心等候）…`;
+    statusEl.textContent = `CDP 篩出 ${candidates.length} 檔偏空候選，正在分批抓歷史日線疊加 RSI/KD 確認（已加速，仍需要一些時間）…`;
     document.getElementById('progressWrap').style.display='block';
     const bar = document.getElementById('progressBar');
 
-    for(let i=0;i<candidates.length;i++){
-      const c = candidates[i];
-      bar.style.width = `${Math.round((i/candidates.length)*100)}%`;
-      statusEl.textContent = `RSI/KD 確認中… (${i+1}/${candidates.length}) ${c.code} ${c.name}`;
-      try{
-        const hist = await fetchStockHistory(c.code, 3, mode, proxyBase);
-        c.rsiKd = evalRsiKd(hist);
-      }catch(e){
-        c.rsiKd = {confirmed:false, label:'抓取失敗，僅以CDP判斷'};
-      }
-      await new Promise(r=>setTimeout(r,500));
+    const BATCH_SIZE = 3; // 同時處理幾檔，太大容易被證交所擋，3是經驗值
+    let done = 0;
+    for(let i=0;i<candidates.length;i+=BATCH_SIZE){
+      const batch = candidates.slice(i, i+BATCH_SIZE);
+      statusEl.textContent = `RSI/KD 確認中… (${done+1}~${Math.min(done+batch.length,candidates.length)}/${candidates.length})`;
+      await Promise.all(batch.map(async (c)=>{
+        try{
+          const hist = await fetchStockHistory(c.code, 2, mode, proxyBase);
+          c.rsiKd = evalRsiKd(hist);
+        }catch(e){
+          c.rsiKd = {confirmed:false, label:'抓取失敗，僅以CDP判斷'};
+        }
+      }));
+      done += batch.length;
+      bar.style.width = `${Math.round((done/candidates.length)*100)}%`;
+      await new Promise(r=>setTimeout(r,400)); // 批次間留點間隔，避免瞬間請求量太大被擋
     }
     bar.style.width='100%';
 
@@ -441,7 +446,10 @@ async function run(){
     });
 
     renderCards(candidates, day, rangeN);
-    statusEl.textContent = `交易日 ${day}：成交量前 ${rangeN} 檔中，CDP篩出 ${candidates.length} 檔偏空候選，其中 ${candidates.filter(c=>c.rsiKd&&c.rsiKd.confirmed).length} 檔 RSI/KD 也同步確認。`;
+    const freshnessNote = usedFallback
+      ? `\n⚠️ 你選的 ${dateVal} 還沒有存檔，以下顯示的是目前最新可用資料（${day}）。要回補 ${dateVal}，到 Actions → Daily TWSE Fetch → Run workflow 填入 ${dateVal.replace(/-/g,'')} 執行一次。`
+      : `\n✅ 這是目前已存檔的最新資料（${day}）。`;
+    statusEl.textContent = `交易日 ${day}：成交量前 ${rangeN} 檔中，CDP篩出 ${candidates.length} 檔偏空候選，其中 ${candidates.filter(c=>c.rsiKd&&c.rsiKd.confirmed).length} 檔 RSI/KD 也同步確認。${freshnessNote}`;
     renderFetchLog();
 
   }catch(err){
