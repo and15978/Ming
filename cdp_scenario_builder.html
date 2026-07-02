@@ -745,36 +745,99 @@ async function autoFetch(){
   const volThreshold = parseFloat(document.getElementById('volThreshold').value) || 0;
   const dateVal = document.getElementById('dateInput') ? document.getElementById('dateInput').value : '';
 
-  let payload, usedFallback = false;
+  let payload, usedFallback = false, usedLive = false;
 
+  // 策略一：先試靜態存檔（有的話最快，不用連線）
   if(dateVal){
     setStatus(`正在讀取 ${dateVal} 的存檔...`, 'loading');
     try{
       const resp = await fetch(`data/${dateVal}.json`, {cache: 'no-store'});
       if(resp.ok) payload = await resp.json();
-    } catch(e){ /* 該日期還沒存檔，往下退回latest */ }
+    } catch(e){ /* 還沒存檔，繼續往下 */ }
+  }
+
+  // 策略二：latest.json（GitHub Actions 最新一次自動更新）
+  if(!payload){
+    setStatus('正在讀取最新存檔...', 'loading');
+    try{
+      const resp = await fetch('data/latest.json', {cache: 'no-store'});
+      if(resp.ok){
+        const tmp = await resp.json();
+        // 如果 latest.json 的交易日期就是選的那天，直接用；否則標記 fallback
+        if(!dateVal || (tmp.trade_date && tmp.trade_date === dateVal)){
+          payload = tmp;
+        } else {
+          // latest 是舊的，先記起來備用，但繼續嘗試即時抓
+          payload = tmp;
+          usedFallback = true;
+        }
+      }
+    } catch(e){ /* latest.json 也沒有，繼續 */ }
+  }
+
+  // 策略三：直接即時連線証交所 MI_INDEX 抓選定日期的全市場資料
+  // 只要靜態檔不是選定日期的資料，就嘗試即時抓一次（跟個股查詢走同一套系統）
+  if(usedFallback || !payload){
+    const dateStr8 = dateVal.replace(/-/g, '');
+    if(dateStr8.length === 8){
+      setStatus(`靜態存檔沒有 ${dateVal} 的資料，正在即時連線證交所抓取...`, 'loading');
+      try{
+        const miUrl = `https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date=${dateStr8}&type=ALLBUT0999`;
+        const miProxy = `/api/mi?date=${dateStr8}`;
+        const { data: miPayload } = await fetchJsonWithProxyFallback(miUrl, miProxy);
+        const table = extractStockTable(miPayload);
+        if(table){
+          // 把MI_INDEX格式轉成跟靜態JSON一樣的格式
+          const fields = table.fields;
+          const idxCode = findField(fields, ['證券代號']);
+          const idxName = findField(fields, ['證券名稱']);
+          const idxHigh = findField(fields, ['最高價']);
+          const idxLow = findField(fields, ['最低價']);
+          const idxClose = findField(fields, ['收盤價']);
+          const idxChange = findField(fields, ['漲跌價差']);
+          const idxSign = findField(fields, ['漲跌(+/-)', '漲跌(+-)']);
+          const idxVol = findField(fields, ['成交股數']);
+          const liveStocks = [];
+          table.data.forEach(row => {
+            const code = row[idxCode], name = row[idxName];
+            if(!code || !name) return;
+            let change = parseFloat(String(row[idxChange]).replace(/,/g,''));
+            const signRaw = idxSign >= 0 ? String(row[idxSign]) : '';
+            if(signRaw.includes('-') || signRaw.includes('跌')) change = -Math.abs(change);
+            else change = Math.abs(change);
+            liveStocks.push({
+              Code: code, Name: name,
+              HighestPrice: row[idxHigh], LowestPrice: row[idxLow],
+              ClosingPrice: row[idxClose], Change: String(change),
+              TradeVolume: row[idxVol],
+            });
+          });
+          if(liveStocks.length > 0){
+            payload = { trade_date: dateVal, stocks: liveStocks, source: 'MI_INDEX_live' };
+            usedFallback = false;
+            usedLive = true;
+          }
+        }
+      } catch(liveErr){
+        // 即時抓也失敗，繼續用之前的 payload（如果有的話），或往下報錯
+        console.warn('即時抓取MI_INDEX失敗:', liveErr.message);
+      }
+    }
   }
 
   if(!payload){
-    if(dateVal) usedFallback = true;
-    setStatus('正在讀取最新一次自動更新的資料檔...', 'loading');
-    try{
-      const resp = await fetch('data/latest.json', {cache: 'no-store'});
-      if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      payload = await resp.json();
-    } catch(err){
-      setStatus(
-        `讀取自動更新資料失敗：${err.message || err}<br>`+
-        `可能是 GitHub Actions 還沒第一次執行。請到 repo 的 Actions 分頁，選「Daily TWSE Fetch」→「Run workflow」手動跑一次（如果要回補某一天的歷史資料，在跳出來的 date 欄位填 YYYYMMDD），等它跑完（約30秒~1分鐘）再重新整理這頁試一次。或先用下方「手動貼上資料」。或使用下方「進階：直接觸發回補」功能。`,
-        'error'
-      );
-      return;
-    }
+    setStatus(
+      `靜態存檔跟即時連線都失敗了。<br>`+
+      `可能是 GitHub Actions 還沒第一次執行，或選的日期是假日/未來。<br>`+
+      `請到 repo 的 Actions 分頁，選「Daily TWSE Fetch」→「Run workflow」手動跑一次，或先用下方「手動貼上資料」。`,
+      'error'
+    );
+    return;
   }
 
   const stocks = payload.stocks || [];
   if(stocks.length === 0){
-    setStatus('資料檔是空的，請確認 GitHub Actions 是否執行成功（到 repo 的 Actions 分頁看有沒有綠色勾勾）。', 'error');
+    setStatus('資料是空的，可能是非交易日或資料來源暫時無回應。', 'error');
     return;
   }
 
@@ -805,10 +868,9 @@ async function autoFetch(){
   lastDataset = fullList;
   const fetchedAt = payload.fetched_at_utc ? new Date(payload.fetched_at_utc) : null;
   const tradeDateNote = payload.trade_date ? `交易日：${payload.trade_date}　` : '';
-  const fallbackNote = usedFallback ? `（你選的 ${dateVal} 還沒有存檔，目前顯示的是最新一次的資料，要回補這天請到Actions手動跑一次並填日期，或用下方「進階：直接觸發回補」）` : '';
-  const fetchedNote = fetchedAt
-    ? `（資料更新時間：${fetchedAt.toLocaleString('zh-TW', {timeZone:'Asia/Taipei'})} 台北時間）`
-    : '';
+  const sourceNote = usedLive ? '（即時連線抓取）' : fetchedAt ? `（資料更新時間：${fetchedAt.toLocaleString('zh-TW', {timeZone:'Asia/Taipei'})} 台北時間）` : '';
+  const fallbackNote = usedFallback ? `（你選的 ${dateVal} 還沒有存檔，目前顯示的是最新一次的資料）` : '';
+
 
   // 主力買超篩選（選用）：用該交易日的T86三大法人買賣超資料，過濾/標註結果
   const t86DateForFilter = (payload.trade_date || dateVal || '').replace(/-/g, '');
@@ -818,7 +880,7 @@ async function autoFetch(){
     ? `，其中主力買超達標 ${finalResults.length} 檔`
     : '';
 
-  setStatus(`讀取成功！${tradeDateNote}${fetchedNote}${fallbackNote}<br>共 ${results.length} 檔符合篩選條件${instNote}（資料庫內共 ${fullList.length} 檔個股，可在下方查詢任一檔CDP）。`, fallbackNote ? 'loading' : 'ok');
+  setStatus(`讀取成功！${tradeDateNote}${sourceNote}${fallbackNote}<br>共 ${results.length} 檔符合篩選條件${instNote}（資料庫內共 ${fullList.length} 檔個股，可在下方查詢任一檔CDP）。`, fallbackNote ? 'loading' : 'ok');
   renderResults(finalResults);
 }
 
