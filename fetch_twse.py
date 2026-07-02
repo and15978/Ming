@@ -144,21 +144,47 @@ def parse_mi_index_payload(payload):
 
 
 def extract_mi_index_date(payload):
-    """從 MI_INDEX 回傳內容裡找出實際的交易日期（藏在報表標題裡，例如「115年06月30日 大盤統計資訊」）"""
-    for key, val in payload.items():
-        if isinstance(val, str):
-            m = re.search(r"(\d{2,3})年(\d{1,2})月(\d{1,2})日", val)
-            if m:
-                roc_year, month, day = m.groups()
-                year = int(roc_year) + 1911
-                return f"{year:04d}-{int(month):02d}-{int(day):02d}"
-        if isinstance(val, list) and val and isinstance(val[0], str):
-            m = re.search(r"(\d{2,3})年(\d{1,2})月(\d{1,2})日", val[0])
-            if m:
-                roc_year, month, day = m.groups()
-                year = int(roc_year) + 1911
-                return f"{year:04d}-{int(month):02d}-{int(day):02d}"
-    return None
+    """
+    從 MI_INDEX 回傳內容裡找出實際的交易日期。
+    證交所 MI_INDEX 可能有以下幾種格式存放日期：
+      1) payload["date"] = "1150630"（民國7碼）
+      2) title字串裡有「115年06月30日」
+      3) tables陣列或 fields數字 的標題
+    三種都試，只要找到一個就回傳。
+    """
+    import re
+    # 格式1：直接有 "date" 欄位，值為民國7碼
+    date_raw = payload.get("date", "")
+    if date_raw and re.match(r"^\d{7}$", str(date_raw)):
+        return normalize_roc_date_to_iso(str(date_raw))
+
+    # 格式2/3：掃所有字串值（包含 title, stat, 以及 tables 裡的 title）
+    def scan_string(s):
+        m = re.search(r"(\d{2,3})年(\d{1,2})月(\d{1,2})日", str(s))
+        if m:
+            roc_year, month, day = m.groups()
+            year = int(roc_year) + 1911
+            return f"{year:04d}-{int(month):02d}-{int(day):02d}"
+        return None
+
+    def deep_scan(obj, depth=0):
+        if depth > 4:
+            return None
+        if isinstance(obj, str):
+            return scan_string(obj)
+        if isinstance(obj, list):
+            for item in obj[:5]:  # 只看前幾個，避免太慢
+                r = deep_scan(item, depth + 1)
+                if r:
+                    return r
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                r = deep_scan(v, depth + 1)
+                if r:
+                    return r
+        return None
+
+    return deep_scan(payload)
 
 
 def fetch_latest_via_mi_index():
