@@ -386,23 +386,23 @@ function starRating(volLots){
 }
 
 function buildScenario(volLots, nh, ah, nl, al, prevClose){
-  let direction, entryCond, entryLow, entryHigh, note;
+  let direction, entryCond, note;
   if(volLots >= 30000){
     direction = '偏多（強勢延續）';
     entryCond = '開盤5分鐘內站穩NH上方且量能放大';
-    entryLow = nh*1.0005; entryHigh = nh*1.005;
     note = '量大，波動大，適合短線快進快出';
   } else if(volLots >= 3000){
     direction = '偏多（鎖漲停隔日）';
     entryCond = `開盤直接鎖漲停或放量站上${prevClose.toFixed(2)}且不跌破`;
-    entryLow = prevClose; entryHigh = prevClose*1.004;
     note = '鎖漲停隔日，容易高開震盪回落';
   } else {
     direction = '偏多（偏多震盪走高）';
     entryCond = '開盤站上NH且量能放大';
-    entryLow = nh*1.001; entryHigh = nh*1.008;
     note = '量小，容易瞬間拉高後回壓';
   }
+  // 進場價參考統一用昨日收盤價區間
+  const entryLow = prevClose;
+  const entryHigh = prevClose * 1.005;
   return {
     direction, entryCond, entryLow, entryHigh,
     stopLoss: nl, target1: nh, target2: ah, note,
