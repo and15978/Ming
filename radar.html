@@ -242,7 +242,7 @@ function renderFetchLog(){
     if(l.status) return `❌ ${l.src} 失敗 (HTTP ${l.status})`;
     return `❌ ${l.src} 失敗：${l.error}`;
   });
-  box.innerHTML = '<details open><summary>抓取過程記錄（除錯用）</summary>' + lines.join('<br>') + '</details>';
+  box.innerHTML = '<details><summary>抓取過程記錄（除錯用）</summary>' + lines.join('<br>') + '</details>';
 }
 
 async function fetchMarketDay(dateStr, mode, proxyBase){
