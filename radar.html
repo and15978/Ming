@@ -87,6 +87,7 @@
         <option value="100">前 100 檔</option>
         <option value="150" selected>前 150 檔</option>
         <option value="200">前 200 檔</option>
+        <option value="99999">全檔掃描（較慢）</option>
       </select>
     </div>
     <div>
@@ -136,13 +137,22 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <label class="chk-item"><input type="checkbox" id="f1"> <span><b>①</b> 收盤價 &gt; <input type="number" id="f1val" value="30" style="width:55px;"> 元</span></label>
         <label class="chk-item"><input type="checkbox" id="f2"> <span><b>②</b> 成交量 &gt; <input type="number" id="f2val" value="3000" style="width:65px;"> 張</span></label>
-        <label class="chk-item"><input type="checkbox" id="f3"> <span><b>③</b> 爆量：今日成交量 &gt; 5日均量 × <input type="number" id="f3val" value="2" step="0.1" style="width:45px;"> 倍</span></label>
-        <label class="chk-item"><input type="checkbox" id="f4"> <span><b>④</b> 今日漲幅 &gt; <input type="number" id="f4val" value="5" step="0.5" style="width:45px;"> %</span></label>
-        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f5"> <span><b>⑤</b> 波段高點：今日最高 = <select id="f5val" style="padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;"><option value="20">20日最高價</option><option value="60">60日最高價</option><option value="either">20日或60日最高價</option></select></span></label>
-        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f6"> <span><b>⑥</b> 長上影線：(最高價 - 收盤價) / 收盤價 &gt; <input type="number" id="f6val" value="3" step="0.5" style="width:45px;"> %</span></label>
-        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f7"> <span><b>⑦</b> 均線多頭排列：收盤價 &gt; MA5、MA10、MA20</span></label>
+        <label class="chk-item"><input type="checkbox" id="f3"> <span><b>③</b> 爆量：今日成交量 &gt; 5日均量 × <input type="number" id="f3val" value="1.5" step="0.1" style="width:45px;"> 倍</span></label>
+        <label class="chk-item"><input type="checkbox" id="f4"> <span><b>④</b> 今日漲幅 &gt; <input type="number" id="f4val" value="3" step="0.5" style="width:45px;"> %</span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f5"> <span><b>⑤</b> 波段高點：今日最高 = <select id="f5val" style="padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;"><option value="5">5日最高價</option><option value="10">10日最高價</option><option value="20">20日最高價</option><option value="60">60日最高價</option><option value="either">10日或20日最高價</option></select></span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f6"> <span><b>⑥</b> 長上影線：(最高價 - 收盤價) / 收盤價 &gt; <input type="number" id="f6val" value="2" step="0.5" style="width:45px;"> %</span></label>
+        <label class="chk-item" style="grid-column:span 2;">
+          <input type="checkbox" id="f7">
+          <span><b>⑦</b> 均線（可多選）：收盤價 &gt;
+            <label style="margin-left:8px;font-weight:normal;"><input type="checkbox" id="f7ma5" checked> MA5</label>
+            <label style="margin-left:8px;font-weight:normal;"><input type="checkbox" id="f7ma10"> MA10</label>
+            <label style="margin-left:8px;font-weight:normal;"><input type="checkbox" id="f7ma20"> MA20</label>
+          </span>
+        </label>
         <label class="chk-item"><input type="checkbox" id="f8"> <span><b>⑧</b> KD：K值 &gt; <input type="number" id="f8val" value="75" style="width:50px;"></span></label>
         <label class="chk-item"><input type="checkbox" id="f9"> <span><b>⑨</b> RSI(6) &gt; <input type="number" id="f9val" value="70" style="width:50px;"></span></label>
+        <label class="chk-item"><input type="checkbox" id="f10"> <span><b>⑩</b> 振幅 &gt; <input type="number" id="f10val" value="6" step="0.5" style="width:45px;"> %（當天震盪大）</span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f11"> <span><b>⑪</b> 收盤位置：收盤 &lt; 最高價 × (1 - <input type="number" id="f11val" value="1" step="0.5" style="width:40px;"> %)（尾盤轉弱）</span></label>
       </div>
     </div>
   </details>
@@ -329,7 +339,9 @@ function evalHistory(dedup){
   };
   const ma5=ma(5), ma10=ma(10), ma20=ma(20);
 
-  // 20日/60日最高價（不含今日）
+  // 5日/10日/20日/60日最高價（不含今日）
+  const high5  = Math.max(...highs.slice(Math.max(0,i-5),i));
+  const high10 = Math.max(...highs.slice(Math.max(0,i-10),i));
   const high20 = Math.max(...highs.slice(Math.max(0,i-20),i));
   const high60 = Math.max(...highs.slice(Math.max(0,i-60),i));
 
@@ -353,7 +365,7 @@ function evalHistory(dedup){
     confirmed, label,
     rsi:rsiNow, rsi6:rsi6Now, k:kNow, d:dNow,
     avgVol5, ma5, ma10, ma20,
-    high20, high60,
+    high5, high10, high20, high60,
     volToday: vols[i], closeToday: closes[i], highToday: highs[i],
   };
 }
@@ -373,13 +385,18 @@ async function run(){
   const filters = {
     f1: document.getElementById('f1').checked, f1val: parseFloat(document.getElementById('f1val').value)||30,
     f2: document.getElementById('f2').checked, f2val: parseFloat(document.getElementById('f2val').value)||3000,
-    f3: document.getElementById('f3').checked, f3val: parseFloat(document.getElementById('f3val').value)||2,
-    f4: document.getElementById('f4').checked, f4val: parseFloat(document.getElementById('f4val').value)||5,
+    f3: document.getElementById('f3').checked, f3val: parseFloat(document.getElementById('f3val').value)||1.5,
+    f4: document.getElementById('f4').checked, f4val: parseFloat(document.getElementById('f4val').value)||3,
     f5: document.getElementById('f5').checked, f5val: document.getElementById('f5val').value,
-    f6: document.getElementById('f6').checked, f6val: parseFloat(document.getElementById('f6val').value)||3,
+    f6: document.getElementById('f6').checked, f6val: parseFloat(document.getElementById('f6val').value)||2,
     f7: document.getElementById('f7').checked,
+    f7ma5: document.getElementById('f7ma5').checked,
+    f7ma10: document.getElementById('f7ma10').checked,
+    f7ma20: document.getElementById('f7ma20').checked,
     f8: document.getElementById('f8').checked, f8val: parseFloat(document.getElementById('f8val').value)||75,
     f9: document.getElementById('f9').checked, f9val: parseFloat(document.getElementById('f9val').value)||70,
+    f10: document.getElementById('f10').checked, f10val: parseFloat(document.getElementById('f10val').value)||6,
+    f11: document.getElementById('f11').checked, f11val: parseFloat(document.getElementById('f11val').value)||1,
   };
   // 是否有需要歷史資料的條件被勾選
   const needHistory = filters.f3||filters.f5||filters.f7||filters.f8||filters.f9;
@@ -447,6 +464,11 @@ async function run(){
       if(filters.f4 && Math.abs(pct) <= filters.f4val) continue; // 注意偏空所以是跌幅，用絕對值比較
       const upperShadowPct = r.high>0 ? (r.high - r.close)/r.close*100 : 0;
       if(filters.f6 && upperShadowPct <= filters.f6val) continue;
+      // 振幅條件（不需歷史）
+      const ampPct = r.low>0 ? (r.high - r.low)/r.low*100 : 0;
+      if(filters.f10 && ampPct <= filters.f10val) continue;
+      // 收盤位置：收盤 < 最高價 × (1 - f11val%)，即尾盤未守在高點附近
+      if(filters.f11 && r.close >= r.high * (1 - filters.f11val/100)) continue;
 
       const cdp = (r.close*2 + r.high + r.low)/4;
       const ah = cdp + (r.high - r.low);
@@ -508,13 +530,19 @@ async function run(){
             const h = c.rsiKd;
             if(filters.f3 && h.volToday <= h.avgVol5 * filters.f3val) c.advFilterFail = `條件③爆量不足（今日${Math.round(h.volToday/1000)}張，5日均量×${filters.f3val}=${Math.round(h.avgVol5*filters.f3val/1000)}張）`;
             else if(filters.f5){
+              const isNew5  = h.highToday >= h.high5;
+              const isNew10 = h.highToday >= h.high10;
               const isNew20 = h.highToday >= h.high20;
               const isNew60 = h.highToday >= h.high60;
-              if(filters.f5val==='20' && !isNew20) c.advFilterFail='條件⑤未創20日新高';
-              else if(filters.f5val==='60' && !isNew60) c.advFilterFail='條件⑤未創60日新高';
-              else if(filters.f5val==='either' && !isNew20 && !isNew60) c.advFilterFail='條件⑤未創20日或60日新高';
+              const dayMap = {'5':isNew5,'10':isNew10,'20':isNew20,'60':isNew60,'either':isNew10||isNew20};
+              if(!dayMap[filters.f5val]) c.advFilterFail=`條件⑤未創${filters.f5val==='either'?'10日或20日':filters.f5val+'日'}新高`;
             }
-            if(!c.advFilterFail && filters.f7 && !(h.closeToday>h.ma5 && h.closeToday>h.ma10 && h.closeToday>h.ma20)) c.advFilterFail=`條件⑦均線排列不符`;
+            if(!c.advFilterFail && filters.f7){
+              const needMa5=filters.f7ma5, needMa10=filters.f7ma10, needMa20=filters.f7ma20;
+              const fail = (needMa5&&h.closeToday<=h.ma5)||(needMa10&&h.closeToday<=h.ma10)||(needMa20&&h.closeToday<=h.ma20);
+              const label7 = [needMa5?'MA5':'',needMa10?'MA10':'',needMa20?'MA20':''].filter(Boolean).join('、');
+              if(fail) c.advFilterFail=`條件⑦收盤未站上 ${label7}`;
+            }
             if(!c.advFilterFail && filters.f8 && h.k<=filters.f8val) c.advFilterFail=`條件⑧K值${fmt(h.k)}未超過${filters.f8val}`;
             if(!c.advFilterFail && filters.f9 && h.rsi6<=filters.f9val) c.advFilterFail=`條件⑨RSI(6)=${fmt(h.rsi6)}未超過${filters.f9val}`;
           }
@@ -601,8 +629,10 @@ function renderCards(list, day, rangeN){
         <div class="kv"><div class="k">第二目標</div><div class="v strong">${c.t2}</div></div>
         <div class="kv"><div class="k">RSI/KD</div><div class="v">${c.rsiKd ? c.rsiKd.label : '未檢查'}${c.rsiKd&&c.rsiKd.rsi!==undefined?` (RSI14 ${fmt(c.rsiKd.rsi,1)} / RSI6 ${fmt(c.rsiKd.rsi6,1)} / K ${fmt(c.rsiKd.k,1)} / D ${fmt(c.rsiKd.d,1)})`:''}</div></div>
         ${c.rsiKd&&c.rsiKd.ma5!==undefined?`<div class="kv"><div class="k">均線</div><div class="v">MA5 ${fmt(c.rsiKd.ma5)} / MA10 ${fmt(c.rsiKd.ma10)} / MA20 ${fmt(c.rsiKd.ma20)}</div></div>`:''}
-        ${c.rsiKd&&c.rsiKd.high20!==undefined?`<div class="kv"><div class="k">波段高點</div><div class="v">20日高 ${fmt(c.rsiKd.high20)} / 60日高 ${fmt(c.rsiKd.high60)}</div></div>`:''}
+        ${c.rsiKd&&c.rsiKd.high20!==undefined?`<div class="kv"><div class="k">波段高點</div><div class="v">5日高 ${fmt(c.rsiKd.high5)} / 10日高 ${fmt(c.rsiKd.high10)} / 20日高 ${fmt(c.rsiKd.high20)} / 60日高 ${fmt(c.rsiKd.high60)}</div></div>`:''}
         ${c.rsiKd&&c.rsiKd.avgVol5!==undefined?`<div class="kv"><div class="k">爆量</div><div class="v">今日 ${Math.round((c.rsiKd.volToday||0)/1000)} 張 / 5日均量 ${Math.round(c.rsiKd.avgVol5/1000)} 張</div></div>`:''}
+        <div class="kv"><div class="k">振幅</div><div class="v">${fmt((c.high-c.low)/c.low*100,2)}%（最高 ${fmt(c.high)} / 最低 ${fmt(c.low)}）</div></div>
+        <div class="kv"><div class="k">收盤位置</div><div class="v">收盤 ${fmt(c.close)} / 最高 ${fmt(c.high)}（差距 ${fmt((c.high-c.close)/c.high*100,2)}%）</div></div>
         <div class="note">備註：${c.note}</div>
         <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank">▶ 開啟即時報價</a>
       `;
