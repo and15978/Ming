@@ -54,7 +54,10 @@
   .kv .k{color:var(--sub);}
   .kv .v.strong{font-weight:800; font-size:15px;}
   .note{font-size:12.5px; color:var(--sub); margin-top:8px; line-height:1.6;}
-  a.linkbtn{display:inline-block; margin-top:12px; border:1px solid var(--red); color:var(--red); text-decoration:none;
+  .chk-item{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;}
+  .chk-item input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--blue);}
+  .chk-item input[type=number]{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:6px;font-size:13px;}
+ margin-top:12px; border:1px solid var(--red); color:var(--red); text-decoration:none;
     padding:8px 14px; border-radius:999px; font-size:13px; font-weight:700; text-align:center;}
   a.linkbtn:hover{background:rgba(239,91,91,.12);}
   .empty{color:var(--sub); font-size:14px; padding:30px; text-align:center;}
@@ -125,11 +128,31 @@
   </details>
 </div>
 
+<div class="panel">
+  <details>
+    <summary>📋 長上影線（拉高出貨）進階篩選條件（勾選後才套用）</summary>
+    <div style="margin-top:12px;">
+      <div class="rules" style="margin-bottom:10px;color:var(--amber);">以下條件勾選後會在掃描時額外套用，未勾選則忽略。條件1~4、6只需靜態資料（快），條件3、5、7~9需抓歷史K線（略慢）。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <label class="chk-item"><input type="checkbox" id="f1"> <span><b>①</b> 收盤價 &gt; <input type="number" id="f1val" value="30" style="width:55px;"> 元</span></label>
+        <label class="chk-item"><input type="checkbox" id="f2"> <span><b>②</b> 成交量 &gt; <input type="number" id="f2val" value="3000" style="width:65px;"> 張</span></label>
+        <label class="chk-item"><input type="checkbox" id="f3"> <span><b>③</b> 爆量：今日成交量 &gt; 5日均量 × <input type="number" id="f3val" value="2" step="0.1" style="width:45px;"> 倍</span></label>
+        <label class="chk-item"><input type="checkbox" id="f4"> <span><b>④</b> 今日漲幅 &gt; <input type="number" id="f4val" value="5" step="0.5" style="width:45px;"> %</span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f5"> <span><b>⑤</b> 波段高點：今日最高 = <select id="f5val" style="padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;"><option value="20">20日最高價</option><option value="60">60日最高價</option><option value="either">20日或60日最高價</option></select></span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f6"> <span><b>⑥</b> 長上影線：(最高價 - 收盤價) / 收盤價 &gt; <input type="number" id="f6val" value="3" step="0.5" style="width:45px;"> %</span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f7"> <span><b>⑦</b> 均線多頭排列：收盤價 &gt; MA5、MA10、MA20</span></label>
+        <label class="chk-item"><input type="checkbox" id="f8"> <span><b>⑧</b> KD：K值 &gt; <input type="number" id="f8val" value="75" style="width:50px;"></span></label>
+        <label class="chk-item"><input type="checkbox" id="f9"> <span><b>⑨</b> RSI(6) &gt; <input type="number" id="f9val" value="70" style="width:50px;"></span></label>
+      </div>
+    </div>
+  </details>
+</div>
+
+
+
 <div id="resultWrap" style="display:none;">
   <div class="grid" id="cardGrid"></div>
 </div>
-
-<script>
 const statusEl = document.getElementById('status');
 document.getElementById('mode').addEventListener('change', e=>{
   document.getElementById('proxyRow').style.display = e.target.value==='proxy' ? 'flex' : 'none';
@@ -282,31 +305,59 @@ async function fetchStockHistory(stockNo, monthsBack, mode, proxyBase){
   return dedup;
 }
 
-function evalRsiKd(dedup){
+function evalHistory(dedup){
   const closes=dedup.map(r=>r.close), highs=dedup.map(r=>r.high), lows=dedup.map(r=>r.low), vols=dedup.map(r=>r.volume);
-  const rsi = computeRSI(closes,14);
+  const rsi14 = computeRSI(closes,14);
+  const rsi6  = computeRSI(closes,6);
   const {K,D} = computeKD(highs,lows,closes,9);
   const i = dedup.length-1;
-  if(i<15) return {confirmed:false, label:'資料不足'};
-  const rsiNow=rsi[i], rsiPrev=rsi[i-1], kNow=K[i], dNow=D[i], kPrev=K[i-1], dPrev=D[i-1];
-  const start=Math.max(0,i-5);
-  const avgVol5 = vols.slice(start,i).reduce((a,b)=>a+b,0)/Math.max(1,vols.slice(start,i).length);
-  const volSpike = avgVol5? vols[i]>avgVol5*1.5 : false;
+  if(i<20) return {confirmed:false, label:'資料不足'};
+
+  const rsiNow=rsi14[i], kNow=K[i], dNow=D[i], kPrev=K[i-1], dPrev=D[i-1];
+  const rsi6Now = rsi6[i];
+
+  // 5日均量
+  const vol5Slice = vols.slice(Math.max(0,i-5),i);
+  const avgVol5 = vol5Slice.reduce((a,b)=>a+b,0)/Math.max(1,vol5Slice.length);
+
+  // MA5 / MA10 / MA20
+  const ma = (n)=>{
+    const sl = closes.slice(Math.max(0,i-n+1), i+1);
+    return sl.reduce((a,b)=>a+b,0)/sl.length;
+  };
+  const ma5=ma(5), ma10=ma(10), ma20=ma(20);
+
+  // 20日/60日最高價（不含今日）
+  const high20 = Math.max(...highs.slice(Math.max(0,i-20),i));
+  const high60 = Math.max(...highs.slice(Math.max(0,i-60),i));
+
+  // ─── CDP放空確認邏輯（原本的）───
   const range = highs[i]-lows[i];
   const upperShadow = highs[i]-Math.max(dedup[i].open, closes[i]);
   const longUpperShadow = range>0 ? (upperShadow/range)>0.5 : false;
   const kdDeathCross = kPrev>=dPrev && kNow<dNow;
   const rsiOverbought = rsiNow>70;
   const rsiExtreme = rsiNow>80;
+  const volSpike14 = avgVol5? vols[i]>avgVol5*1.5 : false;
   const strongShort = kdDeathCross && rsiNow>=70;
-  const pullbackRisk = rsiExtreme && volSpike && longUpperShadow;
-  let confirmed=false, label='RSI/KD：無明顯放空訊號';
+  const pullbackRisk = rsiExtreme && volSpike14 && longUpperShadow;
+  let confirmed=false, label='RSI/KD：無明顯放空訊号';
   if(strongShort){confirmed=true; label='KD死亡交叉＋RSI≥70';}
   else if(pullbackRisk){confirmed=true; label='RSI>80＋爆量＋長上影線';}
   else if(kdDeathCross){confirmed=true; label='KD死亡交叉';}
   else if(rsiOverbought){confirmed=true; label='RSI超買(>70)轉弱警示';}
-  return {confirmed, label, rsi:rsiNow, k:kNow, d:dNow};
+
+  return {
+    confirmed, label,
+    rsi:rsiNow, rsi6:rsi6Now, k:kNow, d:dNow,
+    avgVol5, ma5, ma10, ma20,
+    high20, high60,
+    volToday: vols[i], closeToday: closes[i], highToday: highs[i],
+  };
 }
+
+// 保留舊名稱相容
+function evalRsiKd(dedup){ return evalHistory(dedup); }
 
 function fmt(n,d=2){ return (n===null||n===undefined||isNaN(n))?'—':n.toFixed(d); }
 
@@ -315,6 +366,21 @@ async function run(){
   const mode = document.getElementById('mode').value;
   const proxyBase = document.getElementById('proxyBase').value.trim();
   const runBtn = document.getElementById('runBtn');
+
+  // 讀取進階勾選條件
+  const filters = {
+    f1: document.getElementById('f1').checked, f1val: parseFloat(document.getElementById('f1val').value)||30,
+    f2: document.getElementById('f2').checked, f2val: parseFloat(document.getElementById('f2val').value)||3000,
+    f3: document.getElementById('f3').checked, f3val: parseFloat(document.getElementById('f3val').value)||2,
+    f4: document.getElementById('f4').checked, f4val: parseFloat(document.getElementById('f4val').value)||5,
+    f5: document.getElementById('f5').checked, f5val: document.getElementById('f5val').value,
+    f6: document.getElementById('f6').checked, f6val: parseFloat(document.getElementById('f6val').value)||3,
+    f7: document.getElementById('f7').checked,
+    f8: document.getElementById('f8').checked, f8val: parseFloat(document.getElementById('f8val').value)||75,
+    f9: document.getElementById('f9').checked, f9val: parseFloat(document.getElementById('f9val').value)||70,
+  };
+  // 是否有需要歷史資料的條件被勾選
+  const needHistory = filters.f3||filters.f5||filters.f7||filters.f8||filters.f9;
   const dateVal = document.getElementById('targetDate').value; // YYYY-MM-DD
 
   runBtn.disabled = true;
@@ -373,6 +439,13 @@ async function run(){
       const weakClose = closePos <= 0.4;
       if(!(isDown && weakClose)) continue;
 
+      // 進階篩選條件（靜態資料可算的部分）
+      if(filters.f1 && r.close <= filters.f1val) continue;
+      if(filters.f2 && lots <= filters.f2val) continue;
+      if(filters.f4 && Math.abs(pct) <= filters.f4val) continue; // 注意偏空所以是跌幅，用絕對值比較
+      const upperShadowPct = r.high>0 ? (r.high - r.close)/r.close*100 : 0;
+      if(filters.f6 && upperShadowPct <= filters.f6val) continue;
+
       const cdp = (r.close*2 + r.high + r.low)/4;
       const ah = cdp + (r.high - r.low);
       const nh = cdp*2 - r.low;
@@ -427,29 +500,52 @@ async function run(){
       await Promise.all(batch.map(async (c)=>{
         try{
           const hist = await fetchStockHistory(c.code, 2, mode, proxyBase);
-          c.rsiKd = evalRsiKd(hist);
+          c.rsiKd = evalHistory(hist);
+          // 套用需要歷史資料的進階篩選條件
+          if(c.rsiKd && c.rsiKd.avgVol5){
+            const h = c.rsiKd;
+            if(filters.f3 && h.volToday <= h.avgVol5 * filters.f3val) c.advFilterFail = `條件③爆量不足（今日${Math.round(h.volToday/1000)}張，5日均量×${filters.f3val}=${Math.round(h.avgVol5*filters.f3val/1000)}張）`;
+            else if(filters.f5){
+              const isNew20 = h.highToday >= h.high20;
+              const isNew60 = h.highToday >= h.high60;
+              if(filters.f5val==='20' && !isNew20) c.advFilterFail='條件⑤未創20日新高';
+              else if(filters.f5val==='60' && !isNew60) c.advFilterFail='條件⑤未創60日新高';
+              else if(filters.f5val==='either' && !isNew20 && !isNew60) c.advFilterFail='條件⑤未創20日或60日新高';
+            }
+            if(!c.advFilterFail && filters.f7 && !(h.closeToday>h.ma5 && h.closeToday>h.ma10 && h.closeToday>h.ma20)) c.advFilterFail=`條件⑦均線排列不符`;
+            if(!c.advFilterFail && filters.f8 && h.k<=filters.f8val) c.advFilterFail=`條件⑧K值${fmt(h.k)}未超過${filters.f8val}`;
+            if(!c.advFilterFail && filters.f9 && h.rsi6<=filters.f9val) c.advFilterFail=`條件⑨RSI(6)=${fmt(h.rsi6)}未超過${filters.f9val}`;
+          }
         }catch(e){
           c.rsiKd = {confirmed:false, label:'抓取失敗，僅以CDP判斷'};
         }
       }));
       done += batch.length;
       bar.style.width = `${Math.round((done/candidates.length)*100)}%`;
-      await new Promise(r=>setTimeout(r,400)); // 批次間留點間隔，避免瞬間請求量太大被擋
+      await new Promise(r=>setTimeout(r,400));
     }
     bar.style.width='100%';
 
-    candidates.sort((a,b)=>{
+    // 過濾掉進階條件不符的候選股
+    const finalCandidates = needHistory
+      ? candidates.filter(c=>!c.advFilterFail)
+      : candidates;
+
+    finalCandidates.sort((a,b)=>{
       const ac = a.rsiKd && a.rsiKd.confirmed ? 1:0;
       const bc = b.rsiKd && b.rsiKd.confirmed ? 1:0;
       if(bc!==ac) return bc-ac;
       return b.lots - a.lots;
     });
 
-    renderCards(candidates, day, rangeN);
+    renderCards(finalCandidates, day, rangeN);
+    const advNote = needHistory && candidates.length !== finalCandidates.length
+      ? `（進階條件篩除了 ${candidates.length - finalCandidates.length} 檔，最終剩 ${finalCandidates.length} 檔）`
+      : '';
     const freshnessNote = usedFallback
-      ? `\n⚠️ 你選的 ${dateVal} 還沒有存檔，以下顯示的是目前最新可用資料（${day}）。要回補 ${dateVal}，到 Actions → Daily TWSE Fetch → Run workflow 填入 ${dateVal.replace(/-/g,'')} 執行一次。`
+      ? `\n⚠️ 你選的 ${dateVal} 還沒有存檔，以下顯示的是目前最新可用資料（${day}）。`
       : `\n✅ 這是目前已存檔的最新資料（${day}）。`;
-    statusEl.textContent = `交易日 ${day}：成交量前 ${rangeN} 檔中，CDP篩出 ${candidates.length} 檔偏空候選，其中 ${candidates.filter(c=>c.rsiKd&&c.rsiKd.confirmed).length} 檔 RSI/KD 也同步確認。${freshnessNote}`;
+    statusEl.textContent = `交易日 ${day}：成交量前 ${rangeN} 檔中，CDP篩出 ${candidates.length} 檔偏空候選，其中 ${finalCandidates.filter(c=>c.rsiKd&&c.rsiKd.confirmed).length} 檔 RSI/KD 也同步確認。${advNote}${freshnessNote}`;
     renderFetchLog();
 
   }catch(err){
@@ -501,7 +597,10 @@ function renderCards(list, day, rangeN){
         <div class="kv"><div class="k">停損價</div><div class="v" style="color:var(--green);">${c.stop}</div></div>
         <div class="kv"><div class="k">第一目標</div><div class="v strong">${c.t1}</div></div>
         <div class="kv"><div class="k">第二目標</div><div class="v strong">${c.t2}</div></div>
-        <div class="kv"><div class="k">RSI/KD</div><div class="v">${c.rsiKd ? c.rsiKd.label : '未檢查'}${c.rsiKd&&c.rsiKd.rsi!==undefined?` (RSI ${fmt(c.rsiKd.rsi,1)} / K ${fmt(c.rsiKd.k,1)} / D ${fmt(c.rsiKd.d,1)})`:''}</div></div>
+        <div class="kv"><div class="k">RSI/KD</div><div class="v">${c.rsiKd ? c.rsiKd.label : '未檢查'}${c.rsiKd&&c.rsiKd.rsi!==undefined?` (RSI14 ${fmt(c.rsiKd.rsi,1)} / RSI6 ${fmt(c.rsiKd.rsi6,1)} / K ${fmt(c.rsiKd.k,1)} / D ${fmt(c.rsiKd.d,1)})`:''}</div></div>
+        ${c.rsiKd&&c.rsiKd.ma5!==undefined?`<div class="kv"><div class="k">均線</div><div class="v">MA5 ${fmt(c.rsiKd.ma5)} / MA10 ${fmt(c.rsiKd.ma10)} / MA20 ${fmt(c.rsiKd.ma20)}</div></div>`:''}
+        ${c.rsiKd&&c.rsiKd.high20!==undefined?`<div class="kv"><div class="k">波段高點</div><div class="v">20日高 ${fmt(c.rsiKd.high20)} / 60日高 ${fmt(c.rsiKd.high60)}</div></div>`:''}
+        ${c.rsiKd&&c.rsiKd.avgVol5!==undefined?`<div class="kv"><div class="k">爆量</div><div class="v">今日 ${Math.round((c.rsiKd.volToday||0)/1000)} 張 / 5日均量 ${Math.round(c.rsiKd.avgVol5/1000)} 張</div></div>`:''}
         <div class="note">備註：${c.note}</div>
         <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank">▶ 開啟即時報價</a>
       `;
