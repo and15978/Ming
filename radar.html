@@ -153,6 +153,13 @@
         <label class="chk-item"><input type="checkbox" id="f9"> <span><b>⑨</b> RSI(6) &gt; <input type="number" id="f9val" value="70" style="width:50px;"></span></label>
         <label class="chk-item"><input type="checkbox" id="f10"> <span><b>⑩</b> 振幅 &gt; <input type="number" id="f10val" value="6" step="0.5" style="width:45px;"> %（當天震盪大）</span></label>
         <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f11"> <span><b>⑪</b> 收盤位置：收盤 &lt; 最高價 × (1 - <input type="number" id="f11val" value="1" step="0.5" style="width:40px;"> %)（尾盤轉弱）</span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f12"> <span><b>⑫</b> 換手率 &gt; <input type="number" id="f12val" value="10" step="0.5" style="width:45px;"> %（成交量/發行股數，需抓個股資料，略慢）</span></label>
+        <label class="chk-item"><input type="checkbox" id="f13"> <span><b>⑬</b> 外資賣超（外資淨賣出 &lt; 0）</span></label>
+        <label class="chk-item"><input type="checkbox" id="f14"> <span><b>⑭</b> 主力賣超（自營商淨賣出 &lt; 0）</span></label>
+        <label class="chk-item" style="grid-column:span 2;"><input type="checkbox" id="f15"> <span><b>⑮</b> 借券增加（今日借券餘額 &gt; 前一交易日）</span></label>
+        <div style="grid-column:span 2; background:rgba(77,141,246,.08); border:1px solid rgba(77,141,246,.3); border-radius:8px; padding:10px 12px; font-size:12.5px; color:var(--blue); line-height:1.7;">
+          ℹ️ 條件⑬⑭⑮需要 <b>fetch_twse.py 新版</b> 抓取的資料（含 T86 三大法人與借券資料）。舊版抓取的 JSON 沒有這些欄位，勾選後會自動跳過沒資料的股票。請先更新 fetch_twse.py 並重新跑一次 Actions 取得新格式資料。
+        </div>
       </div>
     </div>
   </details>
@@ -242,7 +249,7 @@ function renderFetchLog(){
     if(l.status) return `❌ ${l.src} 失敗 (HTTP ${l.status})`;
     return `❌ ${l.src} 失敗：${l.error}`;
   });
-  box.innerHTML = '<details><summary>抓取過程記錄（除錯用）</summary>' + lines.join('<br>') + '</details>';
+  box.innerHTML = '<details open><summary>抓取過程記錄（除錯用）</summary>' + lines.join('<br>') + '</details>';
 }
 
 async function fetchMarketDay(dateStr, mode, proxyBase){
@@ -305,11 +312,12 @@ async function fetchStockHistory(stockNo, monthsBack, mode, proxyBase){
   }
   const parsed = rows.map(r=>({
     date: twDateToISO(r[0]),
-    volume: parseNum(r[1]),
+    volume: parseNum(r[1]),   // 成交股數（股）→後面除以1000轉張
     close: parseNum(r[6]),
     high: parseNum(r[4]),
     low: parseNum(r[5]),
     open: parseNum(r[3]),
+    sharesIssued: r[8] ? Math.round(parseNum(r[8])/1000) : null, // 發行股數（股）→張
   })).filter(r=>!isNaN(r.close));
   const seen=new Set(); const dedup=[];
   for(const r of parsed){ if(!seen.has(r.date)){seen.add(r.date); dedup.push(r);} }
@@ -345,7 +353,11 @@ function evalHistory(dedup){
   const high20 = Math.max(...highs.slice(Math.max(0,i-20),i));
   const high60 = Math.max(...highs.slice(Math.max(0,i-60),i));
 
-  // ─── CDP放空確認邏輯（原本的）───
+  // 換手率：成交股數 / 發行股數（從個股日線資料取）
+  // STOCK_DAY欄位：r[1]=成交股數 r[7]=發行股數（若存在）
+  // dedup裡的volume是成交張數（已÷1000），sharesIssued來自dedup[i].sharesIssued（如果有的話）
+  const sharesIssued = dedup[i].sharesIssued || null; // 張
+  const turnoverRate = sharesIssued && sharesIssued>0 ? (vols[i]/sharesIssued)*100 : null;
   const range = highs[i]-lows[i];
   const upperShadow = highs[i]-Math.max(dedup[i].open, closes[i]);
   const longUpperShadow = range>0 ? (upperShadow/range)>0.5 : false;
@@ -367,6 +379,7 @@ function evalHistory(dedup){
     avgVol5, ma5, ma10, ma20,
     high5, high10, high20, high60,
     volToday: vols[i], closeToday: closes[i], highToday: highs[i],
+    turnoverRate,
   };
 }
 
@@ -397,9 +410,13 @@ async function run(){
     f9: document.getElementById('f9').checked, f9val: parseFloat(document.getElementById('f9val').value)||70,
     f10: document.getElementById('f10').checked, f10val: parseFloat(document.getElementById('f10val').value)||6,
     f11: document.getElementById('f11').checked, f11val: parseFloat(document.getElementById('f11val').value)||1,
+    f12: document.getElementById('f12').checked, f12val: parseFloat(document.getElementById('f12val').value)||10,
+    f13: document.getElementById('f13').checked,
+    f14: document.getElementById('f14').checked,
+    f15: document.getElementById('f15').checked,
   };
   // 是否有需要歷史資料的條件被勾選
-  const needHistory = filters.f3||filters.f5||filters.f7||filters.f8||filters.f9;
+  const needHistory = filters.f3||filters.f5||filters.f7||filters.f8||filters.f9||filters.f12;
   const dateVal = document.getElementById('targetDate').value; // YYYY-MM-DD
 
   runBtn.disabled = true;
@@ -469,6 +486,12 @@ async function run(){
       if(filters.f10 && ampPct <= filters.f10val) continue;
       // 收盤位置：收盤 < 最高價 × (1 - f11val%)，即尾盤未守在高點附近
       if(filters.f11 && r.close >= r.high * (1 - filters.f11val/100)) continue;
+      // 外資賣超（需新版JSON才有ForeignNet欄位）
+      if(filters.f13 && r.ForeignNet !== undefined && r.ForeignNet !== null && r.ForeignNet >= 0) continue;
+      // 主力（自營商）賣超
+      if(filters.f14 && r.DealerNet !== undefined && r.DealerNet !== null && r.DealerNet >= 0) continue;
+      // 借券增加
+      if(filters.f15 && (r.ShortBalanceChange === undefined || r.ShortBalanceChange === null || r.ShortBalanceChange <= 0)) continue;
 
       const cdp = (r.close*2 + r.high + r.low)/4;
       const ah = cdp + (r.high - r.low);
@@ -502,6 +525,11 @@ async function run(){
         code:r.code, name:r.name, close:r.close, high:r.high, low:r.low, open:r.open,
         lots, pct, cdp, ah, nh, nl, al, template, tier,
         entry, stop, t1, t2, note,
+        foreignNet: r.ForeignNet ?? null,
+        dealerNet:  r.DealerNet  ?? null,
+        totalInstNet: r.TotalInstNet ?? null,
+        shortBalance: r.ShortBalance ?? null,
+        shortBalanceChange: r.ShortBalanceChange ?? null,
         rsiKd:null,
       });
     }
@@ -545,6 +573,10 @@ async function run(){
             }
             if(!c.advFilterFail && filters.f8 && h.k<=filters.f8val) c.advFilterFail=`條件⑧K值${fmt(h.k)}未超過${filters.f8val}`;
             if(!c.advFilterFail && filters.f9 && h.rsi6<=filters.f9val) c.advFilterFail=`條件⑨RSI(6)=${fmt(h.rsi6)}未超過${filters.f9val}`;
+            if(!c.advFilterFail && filters.f12){
+              if(h.turnoverRate===null) c.advFilterFail='條件⑫換手率：找不到發行股數資料';
+              else if(h.turnoverRate <= filters.f12val) c.advFilterFail=`條件⑫換手率 ${fmt(h.turnoverRate,2)}% 未超過 ${filters.f12val}%`;
+            }
           }
         }catch(e){
           c.rsiKd = {confirmed:false, label:'抓取失敗，僅以CDP判斷'};
@@ -631,6 +663,7 @@ function renderCards(list, day, rangeN){
         ${c.rsiKd&&c.rsiKd.ma5!==undefined?`<div class="kv"><div class="k">均線</div><div class="v">MA5 ${fmt(c.rsiKd.ma5)} / MA10 ${fmt(c.rsiKd.ma10)} / MA20 ${fmt(c.rsiKd.ma20)}</div></div>`:''}
         ${c.rsiKd&&c.rsiKd.high20!==undefined?`<div class="kv"><div class="k">波段高點</div><div class="v">5日高 ${fmt(c.rsiKd.high5)} / 10日高 ${fmt(c.rsiKd.high10)} / 20日高 ${fmt(c.rsiKd.high20)} / 60日高 ${fmt(c.rsiKd.high60)}</div></div>`:''}
         ${c.rsiKd&&c.rsiKd.avgVol5!==undefined?`<div class="kv"><div class="k">爆量</div><div class="v">今日 ${Math.round((c.rsiKd.volToday||0)/1000)} 張 / 5日均量 ${Math.round(c.rsiKd.avgVol5/1000)} 張</div></div>`:''}
+        ${c.rsiKd&&c.rsiKd.turnoverRate!=null?`<div class="kv"><div class="k">換手率</div><div class="v">${fmt(c.rsiKd.turnoverRate,2)}%</div></div>`:''}
         <div class="kv"><div class="k">振幅</div><div class="v">${fmt((c.high-c.low)/c.low*100,2)}%（最高 ${fmt(c.high)} / 最低 ${fmt(c.low)}）</div></div>
         <div class="kv"><div class="k">收盤位置</div><div class="v">收盤 ${fmt(c.close)} / 最高 ${fmt(c.high)}（差距 ${fmt((c.high-c.close)/c.high*100,2)}%）</div></div>
         <div class="note">備註：${c.note}</div>
