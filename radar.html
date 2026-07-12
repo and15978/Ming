@@ -666,6 +666,10 @@ function renderCards(list, day, rangeN){
         ${c.rsiKd&&c.rsiKd.turnoverRate!=null?`<div class="kv"><div class="k">換手率</div><div class="v">${fmt(c.rsiKd.turnoverRate,2)}%</div></div>`:''}
         <div class="kv"><div class="k">振幅</div><div class="v">${fmt((c.high-c.low)/c.low*100,2)}%（最高 ${fmt(c.high)} / 最低 ${fmt(c.low)}）</div></div>
         <div class="kv"><div class="k">收盤位置</div><div class="v">收盤 ${fmt(c.close)} / 最高 ${fmt(c.high)}（差距 ${fmt((c.high-c.close)/c.high*100,2)}%）</div></div>
+        ${c.foreignNet!=null?`<div class="kv"><div class="k">外資買賣超</div><div class="v" style="color:${c.foreignNet<0?'var(--green)':'var(--red)'};">${c.foreignNet<0?'▼賣超':'▲買超'} ${Math.abs(Math.round(c.foreignNet/1000)).toLocaleString()} 張</div></div>`:''}
+        ${c.dealerNet!=null?`<div class="kv"><div class="k">自營商買賣超</div><div class="v" style="color:${c.dealerNet<0?'var(--green)':'var(--red)'};">${c.dealerNet<0?'▼賣超':'▲買超'} ${Math.abs(Math.round(c.dealerNet/1000)).toLocaleString()} 張</div></div>`:''}
+        ${c.totalInstNet!=null?`<div class="kv"><div class="k">三大法人</div><div class="v" style="color:${c.totalInstNet<0?'var(--green)':'var(--red)'};">${c.totalInstNet<0?'▼賣超':'▲買超'} ${Math.abs(Math.round(c.totalInstNet/1000)).toLocaleString()} 張</div></div>`:''}
+        ${c.shortBalance!=null?`<div class="kv"><div class="k">借券餘額</div><div class="v">${c.shortBalance.toLocaleString()} 張${c.shortBalanceChange!=null?' ('+( c.shortBalanceChange>0?'▲+':'▼')+c.shortBalanceChange.toLocaleString()+' 張)':''}</div></div>`:''}
         <div class="note">備註：${c.note}</div>
         <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank">▶ 開啟即時報價</a>
       `;
