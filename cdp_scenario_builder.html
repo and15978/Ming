@@ -537,7 +537,9 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
       </div>
       <div class="rt-block">
         <button class="rt-toggle" data-uid="${uid}">▶ 開始即時報價</button>
+        <button class="chart-toggle" data-uid="${uid}" style="background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;width:auto;margin-top:0;margin-left:8px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">📈 走勢圖</button>
         <div class="rt-display" id="${uid}-rt"></div>
+        <canvas id="${uid}-chart" style="display:none;width:100%;height:200px;margin-top:10px;border-radius:8px;background:#0a0c0f;"></canvas>
       </div>
     </div>`;
   });
@@ -560,6 +562,161 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
   area.querySelectorAll('.rt-toggle').forEach(btn => {
     btn.addEventListener('click', () => toggleRealtime(btn.dataset.uid));
   });
+
+  // 幫每個「走勢圖」按鈕掛上事件
+  area.querySelectorAll('.chart-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleChart(btn.dataset.uid));
+  });
+}
+
+// ---------- 走勢圖 ----------
+const priceHistory = {}; // uid -> [{time, price}]
+
+function toggleChart(uid){
+  const canvas = document.getElementById(`${uid}-chart`);
+  if(!canvas) return;
+  if(canvas.style.display === 'none'){
+    canvas.style.display = 'block';
+    // 初始化這檔的價格紀錄
+    if(!priceHistory[uid]) priceHistory[uid] = [];
+    drawChart(uid);
+  } else {
+    canvas.style.display = 'none';
+  }
+}
+
+function recordPrice(uid, price){
+  if(!priceHistory[uid]) priceHistory[uid] = [];
+  priceHistory[uid].push({ time: Date.now(), price });
+  // 最多保留200個點（約20分鐘的6秒間隔資料）
+  if(priceHistory[uid].length > 200) priceHistory[uid].shift();
+  // 如果走勢圖是開著的，重新繪製
+  const canvas = document.getElementById(`${uid}-chart`);
+  if(canvas && canvas.style.display !== 'none') drawChart(uid);
+}
+
+function drawChart(uid){
+  const canvas = document.getElementById(`${uid}-chart`);
+  if(!canvas) return;
+  const d = cardDataStore[uid];
+  if(!d) return;
+
+  // 設定canvas實際像素（高DPI支援）
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const W = rect.width || canvas.offsetWidth || 300;
+  const H = 200;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // 顏色定義
+  const C = {
+    bg: '#0a0c0f', grid: '#232a38', text: '#707a8c',
+    ah: '#ff5b5b', nh: '#ff8d8d', cdp: '#e0a72e',
+    nl: '#5fdc8a', al: '#2fbf63',
+    entry: 'rgba(150,80,255,0.15)', entryBorder: '#9650ff',
+    line: '#7aa9ff', dot: '#e7e9ee',
+  };
+
+  // 背景
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const pad = { top: 12, bottom: 24, left: 46, right: 8 };
+  const cW = W - pad.left - pad.right;
+  const cH = H - pad.top - pad.bottom;
+
+  // CDP各水平線的價格
+  const levels = [
+    { price: d.ah,  label: 'AH',  color: C.ah },
+    { price: d.nh,  label: 'NH',  color: C.nh },
+    { price: d.cdp, label: 'CDP', color: C.cdp },
+    { price: d.nl,  label: 'NL',  color: C.nl },
+    { price: d.al,  label: 'AL',  color: C.al },
+  ];
+
+  // 取得歷史價格（若無資料，顯示說明文字）
+  const history = priceHistory[uid] || [];
+  const allPrices = levels.map(l => l.price).concat(history.map(p => p.price));
+  if(allPrices.length === 0){ ctx.fillStyle = C.text; ctx.font = '12px JetBrains Mono'; ctx.fillText('請先開啟「即時報價」', pad.left + 8, H/2); return; }
+
+  const minP = Math.min(...allPrices) * 0.998;
+  const maxP = Math.max(...allPrices) * 1.002;
+  const range = maxP - minP;
+
+  const toY = p => pad.top + cH - ((p - minP) / range) * cH;
+  const toX = i => pad.left + (i / Math.max(history.length - 1, 1)) * cW;
+
+  // 格線
+  ctx.strokeStyle = C.grid;
+  ctx.lineWidth = 0.5;
+  for(let i = 0; i <= 4; i++){
+    const y = pad.top + (cH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    const price = maxP - (range / 4) * i;
+    ctx.fillStyle = C.text; ctx.font = `${10 * dpr > 10 ? 10 : 10}px JetBrains Mono`; ctx.textAlign = 'right';
+    ctx.fillText(price.toFixed(2), pad.left - 3, y + 3);
+  }
+
+  // 進場區間（用昨收 ~ 昨收*1.005 反映進場參考）
+  const entryY1 = toY(d.entryHigh || d.close * 1.005);
+  const entryY2 = toY(d.entryLow || d.close);
+  ctx.fillStyle = C.entry;
+  ctx.fillRect(pad.left, entryY1, cW, entryY2 - entryY1);
+  ctx.strokeStyle = C.entryBorder;
+  ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.left, entryY1); ctx.lineTo(W - pad.right, entryY1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.left, entryY2); ctx.lineTo(W - pad.right, entryY2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // CDP 各水平線
+  levels.forEach(({ price, label, color }) => {
+    const y = toY(price);
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color; ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'left';
+    ctx.fillText(`${label} ${price.toFixed(2)}`, W - pad.right - 64, y - 2);
+  });
+
+  // 即時折線
+  if(history.length > 1){
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    history.forEach((p, i) => {
+      const x = toX(i), y = toY(p.price);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // 最新點
+    const last = history[history.length - 1];
+    const lx = toX(history.length - 1), ly = toY(last.price);
+    ctx.fillStyle = C.dot;
+    ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
+    // 最新價格標籤
+    ctx.fillStyle = C.dot; ctx.font = 'bold 10px JetBrains Mono'; ctx.textAlign = 'left';
+    ctx.fillText(last.price.toFixed(2), lx + 5, ly + 4);
+  } else {
+    ctx.fillStyle = C.text; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('即時報價開啟後，走勢將在此顯示', W / 2, H / 2);
+  }
+
+  // X軸時間標籤
+  if(history.length > 0){
+    ctx.fillStyle = C.text; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'center';
+    [0, Math.floor(history.length / 2), history.length - 1].forEach(i => {
+      if(i < history.length){
+        const t = new Date(history[i].time);
+        const label = `${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}`;
+        ctx.fillText(label, toX(i), H - 6);
+      }
+    });
+  }
 }
 
 // 重新計算單一卡片：用使用者編輯後的 昨收/昨高/昨低/成交量 重跑 CDP公式 + 劇本模板
@@ -626,6 +783,9 @@ function renderRealtimeQuote(uid, item){
   const todayHigh = parseFloat(item.h);
   const todayLow = parseFloat(item.l);
   const pct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+
+  // 記錄價格供走勢圖使用
+  if(!isNaN(price)) recordPrice(uid, price);
   const time = item.t || '--:--:--';
   const pos = classifyPosition(price, d);
 
