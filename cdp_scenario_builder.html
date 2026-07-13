@@ -702,8 +702,7 @@ function drawChart(uid){
     ctx.fillStyle = C.dot; ctx.font = 'bold 10px JetBrains Mono'; ctx.textAlign = 'left';
     ctx.fillText(last.price.toFixed(2), lx + 5, ly + 4);
   } else {
-    ctx.fillStyle = C.text; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('即時報價開啟後，走勢將在此顯示', W / 2, H / 2);
+    // 無資料時不顯示任何文字，只保留CDP線
   }
 
   // X軸時間標籤
