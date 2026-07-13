@@ -249,7 +249,7 @@ function renderFetchLog(){
     if(l.status) return `❌ ${l.src} 失敗 (HTTP ${l.status})`;
     return `❌ ${l.src} 失敗：${l.error}`;
   });
-  box.innerHTML = '<details open><summary>抓取過程記錄（除錯用）</summary>' + lines.join('<br>') + '</details>';
+  box.innerHTML = '<details><summary style="color:var(--sub);font-size:12px;cursor:pointer;">抓取過程記錄（除錯用）</summary>' + lines.join('<br>') + '</details>';
 }
 
 async function fetchMarketDay(dateStr, mode, proxyBase){
@@ -486,12 +486,12 @@ async function run(){
       if(filters.f10 && ampPct <= filters.f10val) continue;
       // 收盤位置：收盤 < 最高價 × (1 - f11val%)，即尾盤未守在高點附近
       if(filters.f11 && r.close >= r.high * (1 - filters.f11val/100)) continue;
-      // 外資賣超（需新版JSON才有ForeignNet欄位）
+      // 外資賣超（需新版JSON才有ForeignNet欄位；欄位不存在時放行）
       if(filters.f13 && r.ForeignNet !== undefined && r.ForeignNet !== null && r.ForeignNet >= 0) continue;
-      // 主力（自營商）賣超
+      // 主力（自營商）賣超（欄位不存在時放行）
       if(filters.f14 && r.DealerNet !== undefined && r.DealerNet !== null && r.DealerNet >= 0) continue;
-      // 借券增加
-      if(filters.f15 && (r.ShortBalanceChange === undefined || r.ShortBalanceChange === null || r.ShortBalanceChange <= 0)) continue;
+      // 借券增加（欄位不存在時放行；=0也算無變化，也放行）
+      if(filters.f15 && r.ShortBalanceChange !== undefined && r.ShortBalanceChange !== null && r.ShortBalanceChange <= 0) continue;
 
       const cdp = (r.close*2 + r.high + r.low)/4;
       const ah = cdp + (r.high - r.low);
@@ -604,10 +604,14 @@ async function run(){
     const advNote = needHistory && candidates.length !== finalCandidates.length
       ? `（進階條件篩除了 ${candidates.length - finalCandidates.length} 檔，最終剩 ${finalCandidates.length} 檔）`
       : '';
+    const hasChipData = finalCandidates.length>0 && finalCandidates[0].foreignNet !== null;
+    const chipNote = (filters.f13||filters.f14||filters.f15) && !hasChipData
+      ? `\n⚠️ 目前 JSON 尚未含有籌碼資料（外資/自營商/借券），條件⑬⑭⑮已暫時放行所有股票。請先更新 fetch_twse.py 並重跑一次 Actions 取得新格式資料，之後勾選才會真正篩選。`
+      : '';
     const freshnessNote = usedFallback
       ? `\n⚠️ 你選的 ${dateVal} 還沒有存檔，以下顯示的是目前最新可用資料（${day}）。`
       : `\n✅ 這是目前已存檔的最新資料（${day}）。`;
-    statusEl.textContent = `交易日 ${day}：成交量前 ${rangeN} 檔中，CDP篩出 ${candidates.length} 檔偏空候選，其中 ${finalCandidates.filter(c=>c.rsiKd&&c.rsiKd.confirmed).length} 檔 RSI/KD 也同步確認。${advNote}${freshnessNote}`;
+    statusEl.textContent = `交易日 ${day}：成交量前 ${rangeN} 檔中，CDP篩出 ${candidates.length} 檔偏空候選，其中 ${finalCandidates.filter(c=>c.rsiKd&&c.rsiKd.confirmed).length} 檔 RSI/KD 也同步確認。${advNote}${chipNote}${freshnessNote}`;
     renderFetchLog();
 
   }catch(err){
