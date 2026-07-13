@@ -2,20 +2,12 @@ name: Daily TWSE Fetch
 
 on:
   schedule:
-    # GitHub Actions scheduled workflows may be delayed or even skipped
-    # during periods of high platform load, so we schedule multiple
-    # fallback times throughout the evening. As long as one of them
-    # fires successfully and TWSE has published the day's data by then,
-    # the fetch will succeed.
-    # (cron times are in UTC; Taipei time = UTC + 8)
-    - cron: '30 6 * * 1-5'   # Taipei 14:30 (1 hour after market close, first attempt)
-    - cron: '0 9 * * 1-5'    # Taipei 17:00 (fallback)
-    - cron: '0 12 * * 1-5'   # Taipei 20:00 (fallback)
-    - cron: '30 15 * * 1-5'  # Taipei 23:30 (fallback, gives TWSE the most buffer time)
+    # 06:30 UTC = 台灣時間 14:30（收盤後約一小時，確保資料已公布），週一到週五
+    - cron: '30 6 * * 1-5'
   workflow_dispatch:
     inputs:
       date:
-        description: 'Date to backfill, format YYYYMMDD (e.g. 20260623). Leave blank to fetch the latest available data.'
+        description: '要抓的交易日期（留空=抓最新；回補歷史請填 YYYYMMDD，例如 20260713）'
         required: false
         default: ''
 
@@ -42,5 +34,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
-          git diff --quiet --cached || git commit -m "Auto update TWSE data $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git diff --quiet --cached || git commit -m "auto: TWSE data $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
