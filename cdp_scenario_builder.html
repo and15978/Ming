@@ -90,14 +90,6 @@
   .sc-badge.star{ background:#1a1f2b; color:#f0c84a; border:1px solid var(--line); }
 
   .rt-block{
-    display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px;
-  }
-  .rt-ext-btn{
-    display:inline-block; padding:9px 16px; border-radius:999px; font-size:13px; font-weight:700;
-    text-decoration:none; background:var(--up); color:#fff; border:1px solid transparent;
-    white-space:nowrap;
-  }
-  .rt-ext-btn:hover{ opacity:.85; }
     margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);
   }
   .rt-toggle{
@@ -176,6 +168,19 @@
   .help{ font-size:11.5px; color:var(--muted); line-height:1.7; margin-top:10px; border-top:1px solid var(--line); padding-top:10px; }
   .help b{ color:var(--text); }
 
+  .branch-table-wrap{ overflow-x:auto; margin-top:10px; border:1px solid var(--line); border-radius:8px; }
+  table.branch-table{ width:100%; border-collapse:collapse; font-size:12.5px; white-space:nowrap; }
+  table.branch-table th{
+    background:var(--panel-2); color:var(--gold); font-weight:700; padding:8px 10px;
+    position:sticky; top:0; border-bottom:1px solid var(--line);
+  }
+  table.branch-table td{
+    padding:6px 10px; border-bottom:1px solid var(--line); color:var(--text);
+  }
+  table.branch-table tr:nth-child(even) td{ background:rgba(255,255,255,0.02); }
+  table.branch-table td.empty-cell{ color:var(--muted); }
+  .branch-source{ font-size:10.5px; color:var(--muted); margin-top:8px; }
+
   footer{ text-align:center; font-size:11px; color:#454d5e; padding:20px; font-family:'JetBrains Mono',monospace; }
 </style>
 </head>
@@ -207,13 +212,55 @@
         <input type="number" id="volThreshold" value="5000" step="500">
       </div>
     </div>
-    <button id="autoFetchBtn">嘗試自動抓取證交所資料（盤後official資料）</button>
+    <button id="autoFetchBtn">讀取每日自動更新資料（GitHub自動抓取，最穩定）</button>
     <button class="ghost" id="yahooRankBtn">改用 Yahoo 即時排行（盤中可用，需先啟動本地代理）</button>
+
+    <div class="row" style="margin-top:14px; align-items:center;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); flex:2;">
+        <input type="checkbox" id="instFilterEnabled" style="width:16px; height:16px;">
+        啟用「主力買超」篩選（三大法人買賣超，需另抓T86資料）
+      </label>
+      <div class="field" style="flex:1; min-width:140px;">
+        <label>主力買超門檻 (張)</label>
+        <input type="number" id="instThreshold" value="5000" step="500">
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:8px; align-items:center;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text);">
+        <input type="checkbox" id="dayTradeEnabled" style="width:16px; height:16px;">
+        顯示「當沖張數」（證交所每日當日沖銷交易標的，免費官方資料；不含隔日沖，證交所沒有公布這項統計）
+      </label>
+    </div>
+
     <div class="sub" style="margin-top:8px;">
-      證交所MI_INDEX/STOCK_DAY是「盤後」才公布的官方資料，盤中（9:00~13:30）按上面那顆通常抓不到今天的資料，這是正常現象不是bug。
+      這顆改成讀取 <code>data/latest.json</code>——這個檔案由 GitHub Actions 每個交易日收盤後自動執行抓取並更新，網頁只是讀自己repo裡的靜態檔案，不會被CORS擋。
+      如果顯示「讀取失敗」，通常是還沒手動觸發過第一次，到 repo 的 <b>Actions</b> 分頁找 <b>Daily TWSE Fetch</b> → <b>Run workflow</b> 跑一次即可。
       盤中要看當下排行，請按下面這顆改用Yahoo股市排行（必須先啟動 cdp_proxy_server.py，因為要靠它解析網頁、繞過CORS）。
+      「主力買超」用的是證交所三大法人買賣超資料(T86)，外資+投信+自營商合計淨買超達到門檻才會列入。
     </div>
     <div id="statusArea"></div>
+
+    <details style="margin-top:14px;">
+      <summary>🔧 進階：直接觸發回補這天的資料（不用自己去Actions分頁點）</summary>
+      <div class="sub" style="margin:8px 0;">
+        填入有 Actions 寫入權限的 GitHub Personal Access Token，按下去就會直接呼叫GitHub API觸發「Daily TWSE Fetch」workflow，
+        跑完後（約30秒~1分鐘）會自動重新讀取上面選的那個日期。Token只存在這個分頁的記憶體裡，重新整理就會消失，不會被存起來或送到別的地方。
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2;">
+          <label>GitHub Token</label>
+          <input type="password" id="ghToken" placeholder="ghp_xxxxxxxxxxxx">
+        </div>
+        <div class="field">
+          <label>Workflow 檔名</label>
+          <input type="text" id="ghWorkflowFile" value="fetch.yml">
+        </div>
+      </div>
+      <button class="ghost" id="triggerBtn">觸發回補（用上面選的資料日期）</button>
+      <button class="ghost" id="triggerNowBtn">先不等，立即重新讀取看看</button>
+      <div id="triggerStatus"></div>
+    </details>
   </div>
 
   <div class="card">
@@ -232,6 +279,44 @@
     <button class="ghost" id="searchBtn">查詢個股 CDP</button>
     <div id="searchStatus"></div>
     <div id="searchResultArea"></div>
+  </div>
+
+  <div class="card">
+    <h2>券商分點分類參考表</h2>
+    <div class="sub" style="margin-bottom:6px;">
+      依「當沖／隔日沖／短線／波段」整理常見券商分點，純參考資料，不會連線抓取，看到哪個分點進出可以對照大概是哪種交易風格的籌碼。
+    </div>
+    <details>
+      <summary>展開查看分類表（20列 × 6欄，可橫向滑動）</summary>
+    <div class="branch-table-wrap">
+      <table class="branch-table">
+        <thead><tr><th>當沖</th><th>隔日沖</th><th>隔日沖</th><th>短線</th><th>波段</th><th>波段</th></tr></thead>
+        <tbody>
+          <tr><td>新加坡瑞銀</td><td>美商高盛</td><td>兆豐-南京</td><td>新加坡瑞銀瑞銀</td><td>台灣匯立</td><td>元大-敦化</td></tr>
+          <tr><td>摩根大通</td><td>港商野村</td><td>兆豐-復興</td><td>摩根大通</td><td>台灣摩根</td><td>日盛-龍潭</td></tr>
+          <tr><td>美林</td><td>新加坡瑞銀</td><td>凱基-士林</td><td>玉山</td><td>港商野村</td><td>台企銀-桃園</td></tr>
+          <tr><td>元大</td><td>摩根大通</td><td>凱基-台北</td><td>康和</td><td>瑞士信貸</td><td>台新-高雄</td></tr>
+          <tr><td>元富</td><td>元大</td><td>凱基-市政</td><td>台企銀-嘉義</td><td>摩根大通</td><td>兆豐-忠孝</td></tr>
+          <tr><td>台新</td><td>元富</td><td>凱基-板橋</td><td>台新-台中</td><td>元富</td><td>兆豐-復興</td></tr>
+          <tr><td>亞東</td><td>元大-土城永寧</td><td>凱基-屏東</td><td>台新-建北</td><td>台新</td><td>國票-和平</td></tr>
+          <tr><td>新光</td><td>元大-太平</td><td>富邦-台中</td><td>台新-高雄</td><td>宏遠</td><td>國票-長城</td></tr>
+          <tr><td>群益</td><td>元大-成功</td><td>富邦-台南</td><td>玉山-台南</td><td>國泰綜合</td><td>凱基-大安</td></tr>
+          <tr><td>元大-中壢</td><td>元大-竹科</td><td>富邦-虎尾</td><td>兆豐-大安</td><td>富邦</td><td>凱基-中港</td></tr>
+          <tr><td>永全-八德</td><td>元大-虎尾</td><td>富邦-建國</td><td>兆豐-忠孝</td><td>華南永昌</td><td>富邦-南屯</td></tr>
+          <tr><td>兆豐-南門</td><td>元大-鹿港</td><td>統一-仁愛</td><td>合庫-台中</td><td>新光</td><td>統一-敦南</td></tr>
+          <tr><td>凱基-大里</td><td>元大-新竹</td><td>統一-松江</td><td>國泰-博愛</td><td>群益</td><td class="empty-cell">—</td></tr>
+          <tr><td>凱基-台北</td><td>元大-彰化</td><td>統一-南京</td><td>國票-長城</td><td>福邦</td><td class="empty-cell">—</td></tr>
+          <tr><td>凱基-屏東</td><td>日盛-忠孝</td><td>華南-竹北</td><td>凱基-市政</td><td>中國信託</td><td class="empty-cell">—</td></tr>
+          <tr><td>凱基-員林</td><td>永豐金-虎尾</td><td>華南-長虹</td><td>凱基-桃園</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+          <tr><td>凱基-站前</td><td>永豐金-桃園</td><td>華南-嘉義</td><td>富邦-建國</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+          <tr><td>富邦-嘉義</td><td>兆豐-中港</td><td>群益-內湖</td><td>富邦-員林</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+          <tr><td>華南-中正</td><td>兆豐-北高雄</td><td>群益-海山</td><td>統一-敦南</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+          <tr><td>聯邦-富強</td><td>兆豐-虎尾</td><td>群益-館前</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="branch-source">資料來源：使用者提供的圖片整理，純參考用，不代表即時進出，請自行核實。</div>
+    </details>
   </div>
 
   <div class="card" id="resultsCard" style="display:none;">
@@ -301,23 +386,23 @@ function starRating(volLots){
 }
 
 function buildScenario(volLots, nh, ah, nl, al, prevClose){
-  let direction, entryCond, entryLow, entryHigh, note;
+  let direction, entryCond, note;
   if(volLots >= 30000){
     direction = '偏多（強勢延續）';
     entryCond = '開盤5分鐘內站穩NH上方且量能放大';
-    entryLow = nh*1.0005; entryHigh = nh*1.005;
     note = '量大，波動大，適合短線快進快出';
   } else if(volLots >= 3000){
     direction = '偏多（鎖漲停隔日）';
     entryCond = `開盤直接鎖漲停或放量站上${prevClose.toFixed(2)}且不跌破`;
-    entryLow = prevClose; entryHigh = prevClose*1.004;
     note = '鎖漲停隔日，容易高開震盪回落';
   } else {
     direction = '偏多（偏多震盪走高）';
     entryCond = '開盤站上NH且量能放大';
-    entryLow = nh*1.001; entryHigh = nh*1.008;
     note = '量小，容易瞬間拉高後回壓';
   }
+  // 進場價參考統一用昨日收盤價區間
+  const entryLow = prevClose;
+  const entryHigh = prevClose * 1.005;
   return {
     direction, entryCond, entryLow, entryHigh,
     stopLoss: nl, target1: nh, target2: ah, note,
@@ -395,6 +480,12 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
     const queryBadge = r.queryTimeLabel
       ? `<span class="sc-badge">查詢時間 ${r.queryTimeLabel}</span>`
       : '';
+    const instBadge = (r.instNetBuy !== undefined && r.instNetBuy !== null)
+      ? `<span class="sc-badge vol">主力買超 ${r.instNetBuy.toLocaleString()} 張</span>`
+      : '';
+    const dayTradeBadge = (r.dayTradeLots !== undefined && r.dayTradeLots !== null)
+      ? `<span class="sc-badge vol">當沖 ${r.dayTradeLots.toLocaleString()} 張</span>`
+      : '';
     html += `
     <div class="scenario-card ${colorClass}" id="card-${uid}">
       <div class="sc-title">${r.name} <span class="sc-code">${r.code}</span></div>
@@ -402,6 +493,8 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
         <span class="sc-badge">▲${r.pct.toFixed(2)}%</span>
         <span class="sc-badge vol">量 ${r.volLots.toLocaleString()} 張</span>
         <span class="sc-badge star" id="${uid}-stars">${r.stars}</span>
+        ${instBadge}
+        ${dayTradeBadge}
         ${metaBadge}
         ${queryBadge}
       </div>
@@ -443,10 +536,10 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
         <div><span class="k">備註</span><span class="v" id="${uid}-note">${r.note}</span></div>
       </div>
       <div class="rt-block">
-        <a class="rt-ext-btn" href="https://tw.stock.yahoo.com/quote/${code}" target="_blank">▶ Yahoo 即時報價</a>
-        <a class="rt-ext-btn" href="https://www.cnyes.com/twstock/ts/${code}" target="_blank" style="background:var(--panel2);border:1px solid var(--border);color:var(--sub);">📈 鉅亨走勢圖</a>
-        <a class="rt-ext-btn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${code}.tw" target="_blank" style="background:var(--panel2);border:1px solid var(--border);color:var(--sub);">🏛 證交所</a>
+        <button class="rt-toggle" data-uid="${uid}">▶ 開始即時報價</button>
+        <button class="chart-toggle" data-uid="${uid}" style="background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;width:auto;margin-top:0;margin-left:8px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">📈 走勢圖</button>
         <div class="rt-display" id="${uid}-rt"></div>
+        <canvas id="${uid}-chart" style="display:none;width:100%;height:200px;margin-top:10px;border-radius:8px;background:#0a0c0f;"></canvas>
       </div>
     </div>`;
   });
@@ -469,6 +562,160 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
   area.querySelectorAll('.rt-toggle').forEach(btn => {
     btn.addEventListener('click', () => toggleRealtime(btn.dataset.uid));
   });
+
+  // 幫每個「走勢圖」按鈕掛上事件
+  area.querySelectorAll('.chart-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleChart(btn.dataset.uid));
+  });
+}
+
+// ---------- 走勢圖 ----------
+const priceHistory = {}; // uid -> [{time, price}]
+
+function toggleChart(uid){
+  const canvas = document.getElementById(`${uid}-chart`);
+  if(!canvas) return;
+  if(canvas.style.display === 'none'){
+    canvas.style.display = 'block';
+    // 初始化這檔的價格紀錄
+    if(!priceHistory[uid]) priceHistory[uid] = [];
+    drawChart(uid);
+  } else {
+    canvas.style.display = 'none';
+  }
+}
+
+function recordPrice(uid, price){
+  if(!priceHistory[uid]) priceHistory[uid] = [];
+  priceHistory[uid].push({ time: Date.now(), price });
+  // 最多保留200個點（約20分鐘的6秒間隔資料）
+  if(priceHistory[uid].length > 200) priceHistory[uid].shift();
+  // 如果走勢圖是開著的，重新繪製
+  const canvas = document.getElementById(`${uid}-chart`);
+  if(canvas && canvas.style.display !== 'none') drawChart(uid);
+}
+
+function drawChart(uid){
+  const canvas = document.getElementById(`${uid}-chart`);
+  if(!canvas) return;
+  const d = cardDataStore[uid];
+  if(!d) return;
+
+  // 設定canvas實際像素（高DPI支援）
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const W = rect.width || canvas.offsetWidth || 300;
+  const H = 200;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // 顏色定義
+  const C = {
+    bg: '#0a0c0f', grid: '#232a38', text: '#707a8c',
+    ah: '#ff5b5b', nh: '#ff8d8d', cdp: '#e0a72e',
+    nl: '#5fdc8a', al: '#2fbf63',
+    entry: 'rgba(150,80,255,0.15)', entryBorder: '#9650ff',
+    line: '#7aa9ff', dot: '#e7e9ee',
+  };
+
+  // 背景
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const pad = { top: 12, bottom: 24, left: 46, right: 8 };
+  const cW = W - pad.left - pad.right;
+  const cH = H - pad.top - pad.bottom;
+
+  // CDP各水平線的價格
+  const levels = [
+    { price: d.ah,  label: 'AH',  color: C.ah },
+    { price: d.nh,  label: 'NH',  color: C.nh },
+    { price: d.cdp, label: 'CDP', color: C.cdp },
+    { price: d.nl,  label: 'NL',  color: C.nl },
+    { price: d.al,  label: 'AL',  color: C.al },
+  ];
+
+  // 取得歷史價格（若無資料，顯示說明文字）
+  const history = priceHistory[uid] || [];
+  const allPrices = levels.map(l => l.price).concat(history.map(p => p.price));
+  if(allPrices.length === 0){ ctx.fillStyle = C.text; ctx.font = '12px JetBrains Mono'; ctx.fillText('請先開啟「即時報價」', pad.left + 8, H/2); return; }
+
+  const minP = Math.min(...allPrices) * 0.998;
+  const maxP = Math.max(...allPrices) * 1.002;
+  const range = maxP - minP;
+
+  const toY = p => pad.top + cH - ((p - minP) / range) * cH;
+  const toX = i => pad.left + (i / Math.max(history.length - 1, 1)) * cW;
+
+  // 格線
+  ctx.strokeStyle = C.grid;
+  ctx.lineWidth = 0.5;
+  for(let i = 0; i <= 4; i++){
+    const y = pad.top + (cH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    const price = maxP - (range / 4) * i;
+    ctx.fillStyle = C.text; ctx.font = `${10 * dpr > 10 ? 10 : 10}px JetBrains Mono`; ctx.textAlign = 'right';
+    ctx.fillText(price.toFixed(2), pad.left - 3, y + 3);
+  }
+
+  // 進場區間（用昨收 ~ 昨收*1.005 反映進場參考）
+  const entryY1 = toY(d.entryHigh || d.close * 1.005);
+  const entryY2 = toY(d.entryLow || d.close);
+  ctx.fillStyle = C.entry;
+  ctx.fillRect(pad.left, entryY1, cW, entryY2 - entryY1);
+  ctx.strokeStyle = C.entryBorder;
+  ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.left, entryY1); ctx.lineTo(W - pad.right, entryY1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.left, entryY2); ctx.lineTo(W - pad.right, entryY2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // CDP 各水平線
+  levels.forEach(({ price, label, color }) => {
+    const y = toY(price);
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color; ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'left';
+    ctx.fillText(`${label} ${price.toFixed(2)}`, W - pad.right - 64, y - 2);
+  });
+
+  // 即時折線
+  if(history.length > 1){
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    history.forEach((p, i) => {
+      const x = toX(i), y = toY(p.price);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // 最新點
+    const last = history[history.length - 1];
+    const lx = toX(history.length - 1), ly = toY(last.price);
+    ctx.fillStyle = C.dot;
+    ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
+    // 最新價格標籤
+    ctx.fillStyle = C.dot; ctx.font = 'bold 10px JetBrains Mono'; ctx.textAlign = 'left';
+    ctx.fillText(last.price.toFixed(2), lx + 5, ly + 4);
+  } else {
+    // 無資料時不顯示任何文字，只保留CDP線
+  }
+
+  // X軸時間標籤
+  if(history.length > 0){
+    ctx.fillStyle = C.text; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'center';
+    [0, Math.floor(history.length / 2), history.length - 1].forEach(i => {
+      if(i < history.length){
+        const t = new Date(history[i].time);
+        const label = `${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}`;
+        ctx.fillText(label, toX(i), H - 6);
+      }
+    });
+  }
 }
 
 // 重新計算單一卡片：用使用者編輯後的 昨收/昨高/昨低/成交量 重跑 CDP公式 + 劇本模板
@@ -535,6 +782,9 @@ function renderRealtimeQuote(uid, item){
   const todayHigh = parseFloat(item.h);
   const todayLow = parseFloat(item.l);
   const pct = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+
+  // 記錄價格供走勢圖使用
+  if(!isNaN(price)) recordPrice(uid, price);
   const time = item.t || '--:--:--';
   const pos = classifyPosition(price, d);
 
@@ -619,72 +869,148 @@ function findField(fields, keywords){
   return fields.findIndex(f => keywords.some(kw => f.includes(kw)));
 }
 
-async function autoFetch(){
-  const dateVal = document.getElementById('dateInput').value; // YYYY-MM-DD
-  if(!dateVal){
-    setStatus('請先選擇日期。', 'error');
-    return;
+// 證交所 MI_INDEX 回傳格式有兩種可能：
+// 1) 新版：{ tables: [ {fields:[...], data:[...]}, ... ] }
+// 2) 舊版（較常見）：{ fields9:[...], data9:[...], fields8:[...], data8:[...], ... } 沒有 tables 陣列，
+//    而是用 fields數字/data數字 成對出現，數字依日期可能不同（fields8/data8 或 fields9/data9 都有出現過）。
+// 這裡兩種都嘗試，找出「同時含有 證券代號 和 收盤」欄位的那一組。
+function extractStockTable(payload){
+  if(Array.isArray(payload.tables)){
+    const hit = payload.tables.find(t =>
+      Array.isArray(t.fields) &&
+      t.fields.some(f => f.includes('證券代號')) &&
+      t.fields.some(f => f.includes('收盤'))
+    );
+    if(hit) return hit;
   }
-  const dateStr = dateVal.replace(/-/g, '');
+  // 掃描所有 fields數字 / data數字 成對的 key
+  const fieldKeys = Object.keys(payload).filter(k => /^fields\d*$/.test(k));
+  for(const fk of fieldKeys){
+    const suffix = fk.slice(6); // 'fields9' -> '9'
+    const dk = 'data' + suffix;
+    const fields = payload[fk];
+    const data = payload[dk];
+    if(Array.isArray(fields) && Array.isArray(data) &&
+       fields.some(f => f.includes('證券代號')) &&
+       fields.some(f => f.includes('收盤'))){
+      return { fields, data };
+    }
+  }
+  return null;
+}
+
+async function autoFetch(){
   const pctThreshold = parseFloat(document.getElementById('pctThreshold').value) || 0;
   const volThreshold = parseFloat(document.getElementById('volThreshold').value) || 0;
+  const dateVal = document.getElementById('dateInput') ? document.getElementById('dateInput').value : '';
 
-  setStatus('正在嘗試連線證交所資料...', 'loading');
+  let payload, usedFallback = false, usedLive = false;
 
-  const url = `https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date=${dateStr}&type=ALLBUT0999`;
-  const proxyPath = `/api/mi?date=${dateStr}`;
+  // 策略一：先試靜態存檔（有的話最快，不用連線）
+  if(dateVal){
+    setStatus(`正在讀取 ${dateVal} 的存檔...`, 'loading');
+    try{
+      const resp = await fetch(`data/${dateVal}.json`, {cache: 'no-store'});
+      if(resp.ok) payload = await resp.json();
+    } catch(e){ /* 還沒存檔，繼續往下 */ }
+  }
 
-  let payload, viaProxy;
-  try{
-    const result = await fetchJsonWithProxyFallback(url, proxyPath);
-    payload = result.data;
-    viaProxy = result.viaProxy;
-  } catch(err){
+  // 策略二：latest.json（GitHub Actions 最新一次自動更新）
+  if(!payload){
+    setStatus('正在讀取最新存檔...', 'loading');
+    try{
+      const resp = await fetch('data/latest.json', {cache: 'no-store'});
+      if(resp.ok){
+        const tmp = await resp.json();
+        // 如果 latest.json 的交易日期就是選的那天，直接用；否則標記 fallback
+        if(!dateVal || (tmp.trade_date && tmp.trade_date === dateVal)){
+          payload = tmp;
+        } else {
+          // latest 是舊的，先記起來備用，但繼續嘗試即時抓
+          payload = tmp;
+          usedFallback = true;
+        }
+      }
+    } catch(e){ /* latest.json 也沒有，繼續 */ }
+  }
+
+  // 策略三：直接即時連線証交所 MI_INDEX 抓選定日期的全市場資料
+  // 只要靜態檔不是選定日期的資料，就嘗試即時抓一次（跟個股查詢走同一套系統）
+  if(usedFallback || !payload){
+    const dateStr8 = dateVal.replace(/-/g, '');
+    if(dateStr8.length === 8){
+      setStatus(`靜態存檔沒有 ${dateVal} 的資料，正在即時連線證交所抓取...`, 'loading');
+      try{
+        const miUrl = `https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date=${dateStr8}&type=ALLBUT0999`;
+        const miProxy = `/api/mi?date=${dateStr8}`;
+        const { data: miPayload } = await fetchJsonWithProxyFallback(miUrl, miProxy);
+        const table = extractStockTable(miPayload);
+        if(table){
+          // 把MI_INDEX格式轉成跟靜態JSON一樣的格式
+          const fields = table.fields;
+          const idxCode = findField(fields, ['證券代號']);
+          const idxName = findField(fields, ['證券名稱']);
+          const idxHigh = findField(fields, ['最高價']);
+          const idxLow = findField(fields, ['最低價']);
+          const idxClose = findField(fields, ['收盤價']);
+          const idxChange = findField(fields, ['漲跌價差']);
+          const idxSign = findField(fields, ['漲跌(+/-)', '漲跌(+-)']);
+          const idxVol = findField(fields, ['成交股數']);
+          const liveStocks = [];
+          table.data.forEach(row => {
+            const code = row[idxCode], name = row[idxName];
+            if(!code || !name) return;
+            let change = parseFloat(String(row[idxChange]).replace(/,/g,''));
+            const signRaw = idxSign >= 0 ? String(row[idxSign]) : '';
+            if(signRaw.includes('-') || signRaw.includes('跌')) change = -Math.abs(change);
+            else change = Math.abs(change);
+            liveStocks.push({
+              Code: code, Name: name,
+              HighestPrice: row[idxHigh], LowestPrice: row[idxLow],
+              ClosingPrice: row[idxClose], Change: String(change),
+              TradeVolume: row[idxVol],
+            });
+          });
+          if(liveStocks.length > 0){
+            payload = { trade_date: dateVal, stocks: liveStocks, source: 'MI_INDEX_live' };
+            usedFallback = false;
+            usedLive = true;
+          }
+        }
+      } catch(liveErr){
+        // 即時抓也失敗，繼續用之前的 payload（如果有的話），或往下報錯
+        console.warn('即時抓取MI_INDEX失敗:', liveErr.message);
+      }
+    }
+  }
+
+  if(!payload){
     setStatus(
-      `自動抓取失敗：${err.message || err}<br>請改用下方「手動貼上資料」的備用方案。`,
+      `靜態存檔跟即時連線都失敗了。<br>`+
+      `可能是 GitHub Actions 還沒第一次執行，或選的日期是假日/未來。<br>`+
+      `請到 repo 的 Actions 分頁，選「Daily TWSE Fetch」→「Run workflow」手動跑一次，或先用下方「手動貼上資料」。`,
       'error'
     );
     return;
   }
 
-  const tables = payload.tables || [];
-  const target = tables.find(t =>
-    Array.isArray(t.fields) &&
-    t.fields.some(f => f.includes('證券代號')) &&
-    t.fields.some(f => f.includes('收盤'))
-  );
-
-  if(!target){
-    setStatus('連線成功，但找不到個股收盤行情表，可能是非交易日或假日，請換一個日期再試。', 'error');
+  const stocks = payload.stocks || [];
+  if(stocks.length === 0){
+    setStatus('資料是空的，可能是非交易日或資料來源暫時無回應。', 'error');
     return;
   }
 
-  const fields = target.fields;
-  const idxCode = findField(fields, ['證券代號']);
-  const idxName = findField(fields, ['證券名稱']);
-  const idxHigh = findField(fields, ['最高價']);
-  const idxLow = findField(fields, ['最低價']);
-  const idxClose = findField(fields, ['收盤價']);
-  const idxChange = findField(fields, ['漲跌價差']);
-  const idxSign = findField(fields, ['漲跌(+/-)', '漲跌(+-)']);
-  const idxVol = findField(fields, ['成交股數']);
-
   const results = [];
   const fullList = [];
-  (target.data || []).forEach(row => {
-    const code = row[idxCode];
-    const name = row[idxName];
-    const high = parseFloat(String(row[idxHigh]).replace(/,/g, ''));
-    const low = parseFloat(String(row[idxLow]).replace(/,/g, ''));
-    const close = parseFloat(String(row[idxClose]).replace(/,/g, ''));
-    let change = parseFloat(String(row[idxChange]).replace(/,/g, ''));
-    const signRaw = idxSign >= 0 ? String(row[idxSign]) : '';
-    const volShares = parseFloat(String(row[idxVol]).replace(/,/g, ''));
+  stocks.forEach(r => {
+    const code = r.Code, name = r.Name;
+    const high = parseFloat(String(r.HighestPrice).replace(/,/g, ''));
+    const low = parseFloat(String(r.LowestPrice).replace(/,/g, ''));
+    const close = parseFloat(String(r.ClosingPrice).replace(/,/g, ''));
+    const change = parseFloat(String(r.Change).replace(/,/g, ''));
+    const volShares = parseFloat(String(r.TradeVolume).replace(/,/g, ''));
 
-    if(isNaN(close) || isNaN(high) || isNaN(low) || isNaN(change) || isNaN(volShares)) return;
-
-    if(signRaw.includes('-') || signRaw.includes('跌')) change = -Math.abs(change);
-    else change = Math.abs(change);
+    if(isNaN(close) || isNaN(high) || isNaN(low) || isNaN(change) || isNaN(volShares) || high<=0 || low<=0) return;
 
     const prevClose = close - change;
     if(!prevClose) return;
@@ -699,9 +1025,22 @@ async function autoFetch(){
   });
 
   lastDataset = fullList;
-  const sourceNote = viaProxy ? '（透過本地代理伺服器）' : '（直連成功）';
-  setStatus(`抓取成功！${sourceNote}共 ${results.length} 檔符合篩選條件（資料庫內共 ${fullList.length} 檔個股，可在下方查詢任一檔CDP）。`, 'ok');
-  renderResults(results);
+  const fetchedAt = payload.fetched_at_utc ? new Date(payload.fetched_at_utc) : null;
+  const tradeDateNote = payload.trade_date ? `交易日：${payload.trade_date}　` : '';
+  const sourceNote = usedLive ? '（即時連線抓取）' : fetchedAt ? `（資料更新時間：${fetchedAt.toLocaleString('zh-TW', {timeZone:'Asia/Taipei'})} 台北時間）` : '';
+  const fallbackNote = usedFallback ? `（你選的 ${dateVal} 還沒有存檔，目前顯示的是最新一次的資料）` : '';
+
+
+  // 主力買超篩選（選用）：用該交易日的T86三大法人買賣超資料，過濾/標註結果
+  const t86DateForFilter = (payload.trade_date || dateVal || '').replace(/-/g, '');
+  let finalResults = await applyInstFilterIfEnabled(results, t86DateForFilter);
+  finalResults = await annotateDayTradingIfEnabled(finalResults, t86DateForFilter);
+  const instNote = document.getElementById('instFilterEnabled').checked
+    ? `，其中主力買超達標 ${finalResults.length} 檔`
+    : '';
+
+  setStatus(`讀取成功！${tradeDateNote}${sourceNote}${fallbackNote}<br>共 ${results.length} 檔符合篩選條件${instNote}（資料庫內共 ${fullList.length} 檔個股，可在下方查詢任一檔CDP）。`, fallbackNote ? 'loading' : 'ok');
+  renderResults(finalResults);
 }
 
 document.getElementById('autoFetchBtn').addEventListener('click', autoFetch);
@@ -747,12 +1086,241 @@ async function fetchYahooRank(rankType){
     .filter(r => r.pct >= pctThreshold && r.volLots >= volThreshold)
     .map(r => buildResult(r.code, r.name, r.high, r.low, r.close, r.pct, r.volLots));
 
+  // 主力買超篩選（選用）：Yahoo排行視為「今天」的資料，用今天日期去抓T86
+  const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  let finalResults = await applyInstFilterIfEnabled(results, todayStr);
+  finalResults = await annotateDayTradingIfEnabled(finalResults, todayStr);
+  const instNote = document.getElementById('instFilterEnabled').checked
+    ? `，其中主力買超達標 ${finalResults.length} 檔`
+    : '';
+
   setStatus(
-    `✓ 已透過本地代理抓到 Yahoo 即時排行，共 ${results.length} 檔符合篩選條件（排行榜內共 ${fullList.length} 檔，可在下方查詢任一檔CDP）。`,
+    `✓ 已透過本地代理抓到 Yahoo 即時排行，共 ${results.length} 檔符合篩選條件${instNote}（排行榜內共 ${fullList.length} 檔，可在下方查詢任一檔CDP）。`,
     'ok'
   );
-  renderResults(results);
+  renderResults(finalResults);
 }
+
+// ---------- 主力買超篩選（三大法人買賣超 T86） ----------
+// 資料來源：證交所「三大法人買賣超日報」(T86)，欄位裡找「三大法人買賣超股數」這欄當作主力買超(股)。
+// 直連 www.twse.com.tw 一樣容易被CORS擋，所以走「直連→本地代理」fallback，跟其他證交所資料一致。
+
+async function fetchT86Map(dateStr8 /* YYYYMMDD，西元年 */){
+  if(!dateStr8 || dateStr8.length !== 8){
+    throw new Error('主力買超篩選需要有效的交易日期(YYYYMMDD)');
+  }
+  const directUrl = `https://www.twse.com.tw/fund/T86?response=json&date=${dateStr8}&selectType=ALL`;
+  const proxyPath = `/api/t86?date=${dateStr8}`;
+  const { data } = await fetchJsonWithProxyFallback(directUrl, proxyPath);
+
+  const table = extractStockTable(data) || (
+    Array.isArray(data.fields) && Array.isArray(data.data) ? data : null
+  );
+  if(!table){
+    throw new Error('查無三大法人買賣超資料(可能是非交易日)');
+  }
+
+  const fields = table.fields;
+  const idxCode = findField(fields, ['證券代號', '代號']);
+  const idxNet = findField(fields, ['三大法人買賣超股數']);
+  if(idxCode < 0 || idxNet < 0){
+    throw new Error('T86資料欄位格式不符預期(找不到「三大法人買賣超股數」欄)');
+  }
+
+  const map = {};
+  table.data.forEach(row => {
+    const code = String(row[idxCode]).trim();
+    const net = parseFloat(String(row[idxNet]).replace(/,/g, ''));
+    if(code && !isNaN(net)) map[code] = net / 1000; // 股 -> 張
+  });
+  return map;
+}
+
+// 如果使用者勾選了「啟用主力買超篩選」，用T86資料過濾/標註結果
+// 抓不到T86資料時，保守不過濾（避免因資料來源問題漏掉原本就符合的個股），只標註失敗訊息
+async function applyInstFilterIfEnabled(results, dateStr8){
+  const checkbox = document.getElementById('instFilterEnabled');
+  if(!checkbox || !checkbox.checked || !results.length) return results;
+
+  const threshold = parseFloat(document.getElementById('instThreshold').value) || 0;
+
+  let map;
+  try{
+    map = await fetchT86Map(dateStr8);
+  } catch(err){
+    setStatus(`主力買超資料抓取失敗：${err.message || err}（本次先不套用這項篩選，其餘結果照常顯示）`, 'error');
+    return results;
+  }
+
+  const filtered = [];
+  results.forEach(r => {
+    const net = map[r.code];
+    r.instNetBuy = (net !== undefined) ? net : null;
+    if(net !== undefined && net >= threshold) filtered.push(r);
+  });
+  return filtered;
+}
+
+// ---------- 當沖張數（每日當日沖銷交易標的 TWTB4U） ----------
+// 只有「當沖」有官方免費統計，「隔日沖」證交所沒有公布這項資料，技術上做不到。
+// 這裡純粹是標註顯示用，不像主力買超那樣會拿來篩選/排除個股。
+
+function extractTableByKeywords(payload, keywordSets){
+  if(Array.isArray(payload.tables)){
+    const hit = payload.tables.find(t =>
+      Array.isArray(t.fields) &&
+      keywordSets.every(kws => t.fields.some(f => kws.some(kw => f.includes(kw))))
+    );
+    if(hit) return hit;
+  }
+  const fieldKeys = Object.keys(payload).filter(k => /^fields\d*$/.test(k));
+  for(const fk of fieldKeys){
+    const suffix = fk.slice(6);
+    const dk = 'data' + suffix;
+    const fields = payload[fk];
+    const data = payload[dk];
+    if(Array.isArray(fields) && Array.isArray(data) &&
+       keywordSets.every(kws => fields.some(f => kws.some(kw => f.includes(kw))))){
+      return { fields, data };
+    }
+  }
+  if(Array.isArray(payload.fields) && Array.isArray(payload.data)){
+    if(keywordSets.every(kws => payload.fields.some(f => kws.some(kw => f.includes(kw))))){
+      return payload;
+    }
+  }
+  return null;
+}
+
+async function fetchDayTradingMap(dateStr8 /* YYYYMMDD，西元年 */){
+  if(!dateStr8 || dateStr8.length !== 8){
+    throw new Error('當沖張數需要有效的交易日期(YYYYMMDD)');
+  }
+  const directUrl = `https://www.twse.com.tw/exchangeReport/TWTB4U?response=json&date=${dateStr8}&selectType=All`;
+  const proxyPath = `/api/daytrading?date=${dateStr8}`;
+  const { data } = await fetchJsonWithProxyFallback(directUrl, proxyPath);
+
+  const table = extractTableByKeywords(data, [['證券代號', '代號'], ['當日沖銷', '當沖']]);
+  if(!table){
+    throw new Error('查無當日沖銷交易資料(可能是非交易日，或這天沒有當沖統計)');
+  }
+
+  const fields = table.fields;
+  const idxCode = findField(fields, ['證券代號', '代號']);
+  let idxVol = fields.findIndex(f => f.includes('當日沖銷') && f.includes('股數'));
+  if(idxVol < 0) idxVol = fields.findIndex(f => f.includes('當沖') && f.includes('股數'));
+  if(idxCode < 0 || idxVol < 0){
+    throw new Error('當沖資料欄位格式不符預期(找不到「當日沖銷...股數」欄)');
+  }
+
+  const map = {};
+  table.data.forEach(row => {
+    const code = String(row[idxCode]).trim();
+    const vol = parseFloat(String(row[idxVol]).replace(/,/g, ''));
+    if(code && !isNaN(vol)) map[code] = vol / 1000; // 股 -> 張
+  });
+  return map;
+}
+
+// 如果使用者勾選了「顯示當沖張數」，標註結果(不過濾，純顯示)
+async function annotateDayTradingIfEnabled(results, dateStr8){
+  const checkbox = document.getElementById('dayTradeEnabled');
+  if(!checkbox || !checkbox.checked || !results.length) return results;
+
+  try{
+    const map = await fetchDayTradingMap(dateStr8);
+    results.forEach(r => {
+      r.dayTradeLots = (map[r.code] !== undefined) ? map[r.code] : null;
+    });
+  } catch(err){
+    setStatus(`當沖張數資料抓取失敗：${err.message || err}（不影響其他結果顯示）`, 'error');
+  }
+  return results;
+}
+
+// ---------- 進階：直接觸發 GitHub Actions 回補資料 ----------
+// 用GitHub官方REST API的 workflow_dispatch 端點，從瀏覽器直接觸發「Daily TWSE Fetch」這個workflow，
+// 不需要去repo網站手動點。需要使用者自行提供一個有 "Actions: write" 權限的 GitHub Personal Access Token，
+// 這個token只存在瀏覽器記憶體裡（重新整理頁面就會消失），不會被送到任何第三方伺服器或寫進localStorage。
+
+const GITHUB_REPO_OWNER = 'and15978';
+const GITHUB_REPO_NAME = 'Liu';
+
+async function triggerWorkflowDispatch(dateVal, token, workflowFile){
+  const dateStr8 = dateVal.replace(/-/g, '');
+  const url = `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/actions/workflows/${workflowFile}/dispatches`;
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      ref: 'main',
+      inputs: { date: dateStr8 },
+    }),
+  });
+
+  if(resp.status === 204){
+    return true;
+  }
+  let detail = '';
+  try{ detail = (await resp.json()).message || ''; } catch(e){}
+  throw new Error(`HTTP ${resp.status} ${detail}`);
+}
+
+function setTriggerStatus(msg, type){
+  const el = document.getElementById('triggerStatus');
+  if(el) el.innerHTML = `<div class="status ${type}">${msg}</div>`;
+}
+
+document.getElementById('triggerBtn').addEventListener('click', async () => {
+  const dateVal = document.getElementById('dateInput').value;
+  const token = document.getElementById('ghToken').value.trim();
+  const workflowFile = document.getElementById('ghWorkflowFile').value.trim() || 'fetch.yml';
+
+  if(!dateVal){
+    setTriggerStatus('請先在上面選好要回補的日期。', 'error');
+    return;
+  }
+  if(!token){
+    setTriggerStatus('請先貼上你的 GitHub Personal Access Token（需要 Actions 寫入權限）。', 'error');
+    return;
+  }
+
+  setTriggerStatus(`正在觸發 ${workflowFile}，要求回補 ${dateVal} 的資料...`, 'loading');
+  try{
+    await triggerWorkflowDispatch(dateVal, token, workflowFile);
+  } catch(err){
+    setTriggerStatus(
+      `觸發失敗：${err.message || err}<br>常見原因：Token權限不足(需要勾選 "Actions" 的讀寫權限)、workflow檔名打錯、或repo/分支名稱不對。`,
+      'error'
+    );
+    return;
+  }
+
+  setTriggerStatus(
+    `已成功觸發！GitHub Actions 通常需要 30秒~1分鐘執行完成。<br>` +
+    `<span id="triggerCountdown">將在 45 秒後自動重新讀取資料...</span>`,
+    'ok'
+  );
+
+  let remaining = 45;
+  const countdownEl = () => document.getElementById('triggerCountdown');
+  const timer = setInterval(() => {
+    remaining -= 1;
+    const el = countdownEl();
+    if(el) el.textContent = `將在 ${remaining} 秒後自動重新讀取資料...`;
+    if(remaining <= 0){
+      clearInterval(timer);
+      autoFetch();
+    }
+  }, 1000);
+});
+
+document.getElementById('triggerNowBtn').addEventListener('click', () => autoFetch());
 
 // 預設日期：今天
 (function(){
@@ -845,7 +1413,7 @@ document.getElementById('parseBtn').addEventListener('click', ()=>{
   setStatus('解析完成，請確認欄位對應是否正確，再按下方按鈕套用。', 'ok');
 });
 
-document.getElementById('applyManualBtn').addEventListener('click', ()=>{
+document.getElementById('applyManualBtn').addEventListener('click', async ()=>{
   const map = {
     code: parseInt(document.getElementById('colCode').value),
     name: parseInt(document.getElementById('colName').value),
@@ -882,8 +1450,18 @@ document.getElementById('applyManualBtn').addEventListener('click', ()=>{
   });
 
   lastDataset = fullList;
-  setStatus(`套用完成，共 ${results.length} 檔符合篩選條件（資料庫內共 ${fullList.length} 檔個股，可在上方查詢任一檔CDP）。`, 'ok');
-  renderResults(results);
+
+  // 手動貼上沒有明確的「資料日期」，用 Step1 的資料日期欄位當作 T86 查詢依據
+  const dateVal = document.getElementById('dateInput') ? document.getElementById('dateInput').value : '';
+  const dateStr8 = dateVal.replace(/-/g, '');
+  let finalResults = await applyInstFilterIfEnabled(results, dateStr8);
+  finalResults = await annotateDayTradingIfEnabled(finalResults, dateStr8);
+  const instNote = document.getElementById('instFilterEnabled').checked
+    ? `，其中主力買超達標 ${finalResults.length} 檔`
+    : '';
+
+  setStatus(`套用完成，共 ${results.length} 檔符合篩選條件${instNote}（資料庫內共 ${fullList.length} 檔個股，可在上方查詢任一檔CDP）。`, 'ok');
+  renderResults(finalResults);
 });
 
 // ---------- 個股 CDP 查詢 ----------
@@ -918,6 +1496,18 @@ function setSearchStatus(msg, type){
 
 async function fetchOpenApiAll(){
   if(openApiCache) return openApiCache;
+  // 優先讀取每日自動更新的靜態檔（同站讀取，不會被CORS擋，最穩定）
+  try{
+    const resp = await fetch('data/latest.json', {cache: 'no-store'});
+    if(resp.ok){
+      const payload = await resp.json();
+      if(Array.isArray(payload.stocks) && payload.stocks.length){
+        openApiCache = payload.stocks;
+        return openApiCache;
+      }
+    }
+  }catch(e){ /* 靜態檔不存在或讀取失敗，往下走原本的直連備援 */ }
+
   const { data } = await fetchJsonWithProxyFallback(TWSE_OPENAPI_URL, '/api/all');
   openApiCache = data;
   return data;
@@ -1052,6 +1642,22 @@ async function runSearch(){
   const built = buildResult(target.Code, target.Name, dayRow.high, dayRow.low, dayRow.close, pct, volLots);
   built.dataDateLabel = rocSlashDateToLabel(dayRow.dateRaw);
   built.queryTimeLabel = nowTimeLabel();
+
+  // 個股查詢一樣可以順便看主力買超(若有勾選)
+  if(document.getElementById('instFilterEnabled').checked){
+    try{
+      const map = await fetchT86Map(dateVal.replace(/-/g, ''));
+      built.instNetBuy = (map[target.Code] !== undefined) ? map[target.Code] : null;
+    } catch(e){ built.instNetBuy = null; }
+  }
+
+  // 個股查詢一樣可以順便看當沖張數(若有勾選)
+  if(document.getElementById('dayTradeEnabled').checked){
+    try{
+      const dtMap = await fetchDayTradingMap(dateVal.replace(/-/g, ''));
+      built.dayTradeLots = (dtMap[target.Code] !== undefined) ? dtMap[target.Code] : null;
+    } catch(e){ built.dayTradeLots = null; }
+  }
 
   const exactNote = dayRow.exact
     ? ''
