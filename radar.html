@@ -675,7 +675,11 @@ function renderCards(list, day, rangeN){
         ${c.totalInstNet!=null?`<div class="kv"><div class="k">三大法人</div><div class="v" style="color:${c.totalInstNet<0?'var(--green)':'var(--red)'};">${c.totalInstNet<0?'▼賣超':'▲買超'} ${Math.abs(Math.round(c.totalInstNet/1000)).toLocaleString()} 張</div></div>`:''}
         ${c.shortBalance!=null?`<div class="kv"><div class="k">借券餘額</div><div class="v">${c.shortBalance.toLocaleString()} 張${c.shortBalanceChange!=null?' ('+( c.shortBalanceChange>0?'▲+':'▼')+c.shortBalanceChange.toLocaleString()+' 張)':''}</div></div>`:''}
         <div class="note">備註：${c.note}</div>
-        <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank">▶ 開啟即時報價</a>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <a class="linkbtn" href="https://tw.stock.yahoo.com/quote/${c.code}" target="_blank">▶ Yahoo即時報價</a>
+          <a class="linkbtn" href="https://www.cnyes.com/twstock/ts/${c.code}" target="_blank" style="border-color:var(--amber);color:var(--amber);">📈 鉅亨走勢圖</a>
+          <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank" style="border-color:var(--sub);color:var(--sub);">🏛 證交所</a>
+        </div>
       `;
       grid.appendChild(card);
     }
