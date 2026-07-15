@@ -2,14 +2,18 @@ name: Daily TWSE Fetch
 
 on:
   schedule:
-    # 06:00 UTC = 台灣時間 14:00（收盤後30分鐘，資料通常已公布）
+    # 台灣時間 14:00（UTC 06:00）— 收盤後30分鐘
     - cron: '0 6 * * 1-5'
-    # 07:00 UTC = 台灣時間 15:00（備援，若14:00還沒抓到就再補一次）
+    # 台灣時間 15:00（UTC 07:00）— 備援一
     - cron: '0 7 * * 1-5'
+    # 台灣時間 17:00（UTC 09:00）— 備援二
+    - cron: '0 9 * * 1-5'
+    # 台灣時間 22:00（UTC 14:00）— 備援三（確保隔天早上一定有資料）
+    - cron: '0 14 * * 1-5'
   workflow_dispatch:
     inputs:
       date:
-        description: '要抓的交易日期（留空=抓最新；回補歷史請填 YYYYMMDD，例如 20260714）'
+        description: '要抓的交易日期（留空=抓最新；回補歷史請填 YYYYMMDD，例如 20260715）'
         required: false
         default: ''
 
