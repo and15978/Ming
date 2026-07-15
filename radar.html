@@ -78,7 +78,7 @@
 <div class="panel">
   <div class="row">
     <div>
-      <label>分析日期（讀取對應的存檔，沒存過會自動退回最新資料）</label>
+      <label>分析日期（留空 = 自動顯示最新資料；指定日期才需要填）</label>
       <input type="date" id="targetDate">
     </div>
     <div>
@@ -176,11 +176,7 @@ const statusEl = document.getElementById('status');
 document.getElementById('mode').addEventListener('change', e=>{
   document.getElementById('proxyRow').style.display = e.target.value==='proxy' ? 'flex' : 'none';
 });
-// 預設日期 = 今天
-(function(){
-  const d = new Date();
-  document.getElementById('targetDate').value = d.toISOString().slice(0,10);
-})();
+// 日期欄位留空，讓使用者手動選；不填就讀最新資料
 
 function ymd(dateStr){ return dateStr.replace(/-/g,''); }
 function addDays(dateStr, n){
@@ -429,27 +425,37 @@ async function run(){
     let payload, usedFallback = false;
 
     if(dateVal){
+      // 有指定日期：先嘗試對應的日期檔
       try{
         const resp = await fetch(`data/${dateVal}.json`, {cache:'no-store'});
         if(resp.ok) payload = await resp.json();
-      }catch(e){ /* 該日期還沒存檔，往下退回latest */ }
-    }
-    if(!payload){
-      if(dateVal) usedFallback = true;
+      }catch(e){}
+
+      if(!payload){
+        // 指定日期沒有存檔，退回 latest
+        usedFallback = true;
+        const resp = await fetch('data/latest.json', {cache:'no-store'});
+        if(!resp.ok) throw new Error(`讀取失敗 (HTTP ${resp.status})，請確認 GitHub Actions 已成功執行過`);
+        payload = await resp.json();
+      }
+    } else {
+      // 沒填日期：直接讀最新資料，最簡單最穩定
       const resp = await fetch('data/latest.json', {cache:'no-store'});
-      if(!resp.ok) throw new Error(`讀取 data/latest.json 失敗 (HTTP ${resp.status})`);
+      if(!resp.ok) throw new Error(`讀取失敗 (HTTP ${resp.status})，請確認 GitHub Actions 已成功執行過`);
       payload = await resp.json();
     }
 
     const raw = payload.stocks || [];
     if(raw.length===0){
-      throw new Error('資料檔是空的，請確認 GitHub Actions 是否執行成功');
+      throw new Error('資料檔是空的，請確認 GitHub Actions 是否執行成功（Actions 分頁看有沒有綠勾勾）');
     }
 
     const day = payload.trade_date || '未知日期';
-    const fallbackNote = usedFallback ? `（你選的 ${dateVal} 還沒有存檔，目前顯示的是最新一次的資料；要回補這天，到 repo 的 Actions → Daily TWSE Fetch → Run workflow，填入 ${dateVal.replace(/-/g,'')} 執行一次）` : '';
+    const fallbackNote = usedFallback
+      ? `\n⚠️ ${dateVal} 還沒有存檔，顯示最新可用資料（${day}）。若要回補：Actions → Daily TWSE Fetch → Run workflow → 填 ${dateVal.replace(/-/g,'')}`
+      : '';
 
-    statusEl.textContent = `已取得 ${raw.length} 檔股票（交易日：${day}）${fallbackNote}，正在篩選成交量前 ${rangeN} 檔…`;
+    statusEl.textContent = `✅ 資料載入（交易日：${day}），共 ${raw.length} 檔，正在篩選成交量前 ${rangeN} 檔…${fallbackNote}`;
 
     const all = raw.map(r=>({
       code: r.Code, name: r.Name,
@@ -675,7 +681,11 @@ function renderCards(list, day, rangeN){
         ${c.totalInstNet!=null?`<div class="kv"><div class="k">三大法人</div><div class="v" style="color:${c.totalInstNet<0?'var(--green)':'var(--red)'};">${c.totalInstNet<0?'▼賣超':'▲買超'} ${Math.abs(Math.round(c.totalInstNet/1000)).toLocaleString()} 張</div></div>`:''}
         ${c.shortBalance!=null?`<div class="kv"><div class="k">借券餘額</div><div class="v">${c.shortBalance.toLocaleString()} 張${c.shortBalanceChange!=null?' ('+( c.shortBalanceChange>0?'▲+':'▼')+c.shortBalanceChange.toLocaleString()+' 張)':''}</div></div>`:''}
         <div class="note">備註：${c.note}</div>
-        <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank">▶ 開啟即時報價</a>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <a class="linkbtn" href="https://tw.stock.yahoo.com/quote/${c.code}" target="_blank">▶ Yahoo即時報價</a>
+          <a class="linkbtn" href="https://www.cnyes.com/twstock/ts/${c.code}" target="_blank" style="border-color:var(--amber);color:var(--amber);">📈 鉅亨走勢圖</a>
+          <a class="linkbtn" href="https://mis.twse.com.tw/stock/index.jsp?ch=${c.code}.tw" target="_blank" style="border-color:var(--sub);color:var(--sub);">🏛 證交所</a>
+        </div>
       `;
       grid.appendChild(card);
     }
