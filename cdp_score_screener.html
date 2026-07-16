@@ -112,7 +112,7 @@
 <div class="wrap">
 
   <div class="marketbar">
-    <button id="fetchBtn" onclick="fetchMarket()">🔄 更新全市場資料（TWSE）</button>
+    <button id="fetchBtn" onclick="fetchMarket()">🔄 更新全市場資料</button>
     <div id="marketStatus" class="market-status">尚未抓取，請先點左方按鈕</div>
   </div>
 
@@ -140,8 +140,9 @@
 <footer>
   評分邏輯：做多條件每項成立 +10 分、做空條件每項成立 −10 分，基準 50 分。<br>
   ≥80 分＝隔日重點做多；20〜80 分＝觀望不操作；≤20 分＝隔日重點做空。<br>
-  自動搜尋資料來源：TWSE OpenAPI（openapi.twse.com.tw），僅提供當日 OHLC 與成交量，
-  漲跌幅／收盤最高比／上影線比／開高走低為自動判定；5日均量、換手率、VWAP、均線、主力買賣超仍需手動確認。<br>
+  自動搜尋資料來源：優先讀取同網域的 <code>data/latest.json</code>（你自己 GitHub Actions 抓好的資料，不會被CORS擋）；
+  若找不到才嘗試直接連 TWSE OpenAPI（可能被CORS擋）。<br>
+  依資料集內容不同，漲跌幅／收盤最高比／上影線比／開高走低可自動判定；5日均量、換手率、VWAP、均線、主力買賣超仍需手動確認。<br>
   本工具僅供策略評估參考，投資有風險，請謹慎評估並嚴設停損。
 </footer>
 
@@ -196,26 +197,54 @@ async function fetchMarket(){
   const btn = document.getElementById('fetchBtn');
   const status = document.getElementById('marketStatus');
   btn.disabled = true; btn.textContent = '抓取中…';
-  status.textContent = '連線 TWSE 開放資料中，請稍候…';
-  try{
-    const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    marketData = data.map(r=>{
-      const num = v => parseFloat(String(v).replace(/,/g,''));
-      return {
-        code: r.Code, name: r.Name,
-        open: num(r.OpeningPrice), high: num(r.HighestPrice),
-        low: num(r.LowestPrice), close: num(r.ClosingPrice),
-        volume: num(r.TradeVolume), change: num(r.Change)
-      };
-    }).filter(r=>!isNaN(r.close) && r.close>0);
-    marketFetchedAt = new Date();
-    status.textContent = `已抓取 ${marketData.length} 檔股票（${marketFetchedAt.toLocaleTimeString('zh-TW')}）｜僅含當日OHLC與成交量，無5日均量／換手率／主力買賣超`;
-  }catch(err){
-    status.textContent = '抓取失敗：' + err.message + '（可能是CORS被擋，建議改用你自己的Termux代理或手動輸入）';
+  status.textContent = '讀取資料中，請稍候…';
+
+  // 來源1：同網域的 data/latest.json（你自己 GitHub Actions 產生的，同源不會被CORS擋）
+  // 來源2：TWSE OpenAPI 直抓（常被CORS擋，僅作備援嘗試）
+  const sources = [
+    { url: 'data/latest.json', label: '你的 GitHub Actions 資料（data/latest.json）' },
+    { url: 'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', label: 'TWSE OpenAPI（直抓）' }
+  ];
+
+  let loaded = false;
+  for(const src of sources){
+    try{
+      const res = await fetch(src.url, {cache:'no-store'});
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const raw = await res.json();
+      const rows = Array.isArray(raw) ? raw : (raw.data || raw.list || raw.stocks || []);
+      const mapped = rows.map(normalizeRow).filter(r=>r && !isNaN(r.close) && r.close>0);
+      if(mapped.length===0) throw new Error('資料格式無法辨識或無有效資料');
+      marketData = mapped;
+      marketFetchedAt = new Date();
+      status.textContent = `已從「${src.label}」抓取 ${marketData.length} 檔股票（${marketFetchedAt.toLocaleTimeString('zh-TW')}）`;
+      loaded = true;
+      break;
+    }catch(err){
+      status.textContent = `「${src.label}」讀取失敗：${err.message}，嘗試下一個來源…`;
+    }
   }
-  btn.disabled = false; btn.textContent = '🔄 更新全市場資料（TWSE）';
+  if(!loaded){
+    status.textContent = '所有來源都讀取失敗。請確認 data/latest.json 是否已上傳到同一個 repo，或改用手動輸入。';
+  }
+  btn.disabled = false; btn.textContent = '🔄 更新全市場資料';
+}
+
+// 嘗試相容不同欄位命名，儘量從一筆資料中解析出 code/name/open/high/low/close/volume/change
+function normalizeRow(r){
+  if(!r) return null;
+  const num = v => v===undefined||v===null||v==='' ? NaN : parseFloat(String(v).replace(/,/g,''));
+  const pick = (...keys) => { for(const k of keys){ if(r[k]!==undefined) return r[k]; } return undefined; };
+  return {
+    code: pick('Code','code','stockNo','證券代號'),
+    name: pick('Name','name','股票名稱') || '',
+    open: num(pick('OpeningPrice','open','開盤價')),
+    high: num(pick('HighestPrice','high','最高價')),
+    low: num(pick('LowestPrice','low','最低價')),
+    close: num(pick('ClosingPrice','close','收盤價')),
+    volume: num(pick('TradeVolume','volume','成交股數')),
+    change: num(pick('Change','change','漲跌價差')) || 0
+  };
 }
 
 function onSearchInput(){
