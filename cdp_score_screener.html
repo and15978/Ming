@@ -93,6 +93,23 @@
 
   .verdict{margin-top:14px;padding:12px;border-radius:10px;text-align:center;font-size:14px;font-weight:700;}
 
+  .cdp-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+  .cdp-table td{padding:6px 8px;border-bottom:1px solid #f0eee6;}
+  .cdp-table td:first-child{color:var(--sub);width:40%;}
+  .cdp-table td:last-child{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;}
+  .cdp-table tr.cur td{background:#fff7e6;}
+  .cdp-note{font-size:11px;color:var(--sub);margin-top:6px;line-height:1.5;}
+
+  .lots-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0 4px;}
+  .lots-grid .field label{font-size:11px;}
+  .lots-total{font-size:12.5px;color:var(--sub);text-align:right;margin-top:2px;}
+
+  .chart-wrap{margin-top:10px;background:#fbfaf7;border:1px solid #eae7dd;border-radius:8px;padding:8px;}
+  .chart-wrap canvas{width:100%;height:190px;display:block;}
+  .chart-legend{display:flex;flex-wrap:wrap;gap:8px;font-size:10.5px;color:var(--sub);margin-top:6px;}
+  .chart-legend span{display:flex;align-items:center;gap:3px;}
+  .chart-legend i{width:14px;height:2px;display:inline-block;}
+
   .empty{text-align:center;color:var(--sub);font-size:13px;padding:40px 10px;}
 
   footer{max-width:720px;margin:0 auto;padding:10px 14px 30px;font-size:11px;color:var(--sub);text-align:center;}
@@ -175,7 +192,11 @@ function newStock(code, name, raw){
   return {
     id: idCounter++,
     code, name, open:true, raw: raw||null,
-    inputs: {chg:'', volRatio:'', closeHighPct:'', turnover:'', wickRatio:''},
+    inputs: {
+      chg:'', volRatio:'', closeHighPct:'', turnover:'', wickRatio:'',
+      prevClose:'', prevHigh:'', prevLow:'',
+      dayTradeLots:'', overnightLots:''
+    },
     conds: {}
   };
 }
@@ -289,9 +310,115 @@ function applyRawToInputs(s){
   s.inputs.chg = chgPct.toFixed(2);
   s.inputs.closeHighPct = closeHighPct.toFixed(2);
   s.inputs.wickRatio = wickRatio.toFixed(2);
+  // 今日收盤已知，可自動帶入「昨收」欄位（=今日的收盤，作為明天計算CDP用的昨收）
+  s.inputs.prevClose = r.close.toFixed(2);
   applyAutoConds(s);
   // 開高走低近似判定：開盤價 > 收盤價
   s.conds.s7 = r.open > r.close;
+}
+
+// ---------- CDP 逆勢操作指標 ----------
+// CDP=(昨收×2+昨高+昨低)/4；AH=CDP+(昨高-昨低)；NH=CDP*2-昨低；NL=CDP*2-昨高；AL=CDP-(昨高-昨低)
+function computeCDP(s){
+  const n = v => parseFloat(v);
+  const pc = n(s.inputs.prevClose), ph = n(s.inputs.prevHigh), pl = n(s.inputs.prevLow);
+  if(isNaN(pc) || isNaN(ph) || isNaN(pl)) return null;
+  const cdp = (pc*2 + ph + pl) / 4;
+  const range = ph - pl;
+  return {
+    ah: cdp + range,
+    nh: cdp*2 - pl,
+    cdp: cdp,
+    nl: cdp*2 - ph,
+    al: cdp - range
+  };
+}
+
+function renderCDPTable(s){
+  const cdp = computeCDP(s);
+  if(!cdp){
+    return `<div class="cdp-note">填入昨收／昨高／昨低後，自動算出 AH／NH／CDP／NL／AL 五個關卡。</div>`;
+  }
+  const close = s.raw ? s.raw.close : (parseFloat(s.inputs.prevClose)||null);
+  const rows = [
+    {k:'AH 最高值', v:cdp.ah}, {k:'NH 近高值', v:cdp.nh},
+    {k:'CDP 中心值', v:cdp.cdp}, {k:'NL 近低值', v:cdp.nl}, {k:'AL 最低值', v:cdp.al}
+  ];
+  return `<table class="cdp-table"><tbody>
+    ${rows.map(r=>`<tr><td>${r.k}</td><td>${r.v.toFixed(2)}</td></tr>`).join('')}
+  </tbody></table>
+  ${close ? `<div class="cdp-note">今日收盤 ${close.toFixed(2)}，落在 ${cdpZoneLabel(cdp, close)}</div>` : ''}`;
+}
+
+function cdpZoneLabel(cdp, close){
+  if(close >= cdp.ah) return 'AH 之上（強勢突破區）';
+  if(close >= cdp.nh) return 'NH～AH 之間（偏多關卡）';
+  if(close >= cdp.cdp) return 'CDP～NH 之間（多空分界偏多）';
+  if(close >= cdp.nl) return 'NL～CDP 之間（多空分界偏空）';
+  if(close >= cdp.al) return 'AL～NL 之間（偏空關卡）';
+  return 'AL 之下（弱勢破底區）';
+}
+
+// ---------- 走勢圖（OHLC + CDP 關卡）----------
+function drawAllCharts(){
+  stocks.forEach(s=>{
+    if(!s.open || !s.raw) return;
+    const canvas = document.getElementById('chart-' + s.id);
+    if(!canvas) return;
+    drawCDPChart(canvas, s);
+  });
+}
+
+function drawCDPChart(canvas, s){
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  const r = s.raw;
+  const cdp = computeCDP(s);
+
+  const levels = [r.high, r.open, r.close, r.low];
+  if(cdp){ levels.push(cdp.ah, cdp.nh, cdp.cdp, cdp.nl, cdp.al); }
+  let max = Math.max(...levels), min = Math.min(...levels);
+  const pad = (max-min)*0.15 || max*0.02 || 1;
+  max += pad; min -= pad;
+  const y = v => H - 24 - ((v-min)/(max-min))*(H-40);
+  const leftPad = 54;
+
+  ctx.font = '10px sans-serif';
+  ctx.strokeStyle = '#eee';
+  ctx.fillStyle = '#8a8f9c';
+
+  // CDP 關卡橫線
+  if(cdp){
+    const lv = [
+      {v:cdp.ah, c:'#e5484d', label:'AH'}, {v:cdp.nh, c:'#e79a3f', label:'NH'},
+      {v:cdp.cdp, c:'#141b3d', label:'CDP'}, {v:cdp.nl, c:'#3f9de7', label:'NL'},
+      {v:cdp.al, c:'#1f9d55', label:'AL'}
+    ];
+    lv.forEach(item=>{
+      const yy = y(item.v);
+      ctx.strokeStyle = item.c;
+      ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(leftPad, yy); ctx.lineTo(W-8, yy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = item.c;
+      ctx.fillText(item.label + ' ' + item.v.toFixed(1), 4, yy+3);
+    });
+  }
+
+  // 今日OHLC K線（單根）
+  const cx = leftPad + (W-leftPad-40)/2;
+  const bodyColor = r.close >= r.open ? '#e5484d' : '#1f9d55';
+  ctx.strokeStyle = bodyColor; ctx.fillStyle = bodyColor; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cx, y(r.high)); ctx.lineTo(cx, y(r.low)); ctx.stroke();
+  const bw = 22;
+  const bodyTop = y(Math.max(r.open, r.close)), bodyBot = y(Math.min(r.open, r.close));
+  ctx.fillRect(cx-bw/2, bodyTop, bw, Math.max(bodyBot-bodyTop, 2));
+
+  // 收盤價標籤
+  ctx.fillStyle = '#141b3d';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('收盤 ' + r.close.toFixed(2), cx+18, y(r.close)+3);
 }
 
 function scanMarket(){
@@ -438,6 +565,39 @@ function render(focusId){
               oninput="updateInput(${s.id},'wickRatio',this.value)"></div>
         </div>
 
+        <div class="section-title" style="color:var(--gold);background:#faf3e2;">🎯 CDP 逆勢操作指標</div>
+        <div class="inputs-grid">
+          <div class="field"><label>昨收</label>
+            <input type="number" step="0.01" value="${s.inputs.prevClose}" placeholder="例：58.3"
+              oninput="updateInput(${s.id},'prevClose',this.value)"></div>
+          <div class="field"><label>昨高</label>
+            <input type="number" step="0.01" value="${s.inputs.prevHigh}" placeholder="例：59.0"
+              oninput="updateInput(${s.id},'prevHigh',this.value)"></div>
+          <div class="field"><label>昨低</label>
+            <input type="number" step="0.01" value="${s.inputs.prevLow}" placeholder="例：57.5"
+              oninput="updateInput(${s.id},'prevLow',this.value)"></div>
+        </div>
+        ${renderCDPTable(s)}
+
+        <div class="section-title" style="color:#5b4bb8;background:#eeecfb;">📦 當沖／隔日張數</div>
+        <div class="lots-grid">
+          <div class="field"><label>當沖張數</label>
+            <input type="number" step="1" value="${s.inputs.dayTradeLots}" placeholder="0"
+              oninput="updateInput(${s.id},'dayTradeLots',this.value)"></div>
+          <div class="field"><label>隔日持有張數</label>
+            <input type="number" step="1" value="${s.inputs.overnightLots}" placeholder="0"
+              oninput="updateInput(${s.id},'overnightLots',this.value)"></div>
+          <div class="field"><label>總張數</label>
+            <input type="text" disabled value="${(parseFloat(s.inputs.dayTradeLots)||0)+(parseFloat(s.inputs.overnightLots)||0)}"
+              style="background:#f5f3ee;color:var(--sub);"></div>
+        </div>
+
+        ${s.raw ? `
+        <div class="section-title" style="color:var(--navy);background:#eef0f7;">📈 今日走勢圖（含CDP關卡）</div>
+        <div class="chart-wrap">
+          <canvas id="chart-${s.id}" width="640" height="190"></canvas>
+        </div>` : ''}
+
         <div class="section-title bull">🐂 做多條件（7項）</div>
         ${BULL_CONDS.map(c=>condRow(s,c,'bull')).join('')}
         <div class="formula-box bull"><b>做多公式</b>爆量＋收最高附近＋主力買超＋站上5MA＋換手率8%以上</div>
@@ -456,6 +616,7 @@ function render(focusId){
   if(focusId){
     // keep card open state already handled via s.open
   }
+  drawAllCharts();
 }
 
 function sortByScore(){
