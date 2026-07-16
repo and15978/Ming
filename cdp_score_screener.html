@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隔日沖選股評分系統</title>
+<style>
+  :root{
+    --navy:#141b3d; --navy2:#1e2a5e;
+    --bull:#e5484d; --bull-bg:#fdeceb; --bull-line:#f3b9b9;
+    --bear:#1f9d55; --bear-bg:#eaf7ee; --bear-line:#a9dfbb;
+    --gold:#c9a24b;
+    --paper:#f7f5f0; --card:#ffffff; --ink:#1c1c22; --sub:#6b6f7d;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+    padding-bottom:60px;}
+  header{background:var(--navy);color:#fff;padding:18px 16px 22px;
+    border-bottom:4px solid var(--gold);}
+  header h1{margin:0 0 4px;font-size:19px;letter-spacing:.5px;}
+  header p{margin:0;font-size:12px;color:#c7cbe0;}
+
+  .wrap{max-width:720px;margin:0 auto;padding:14px;}
+
+  .marketbar{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;}
+  .marketbar button{background:var(--navy);color:#fff;border:none;border-radius:8px;
+    padding:11px 12px;font-size:13.5px;font-weight:600;}
+  .market-status{font-size:11.5px;color:var(--sub);padding:0 2px;}
+
+  .addbar{display:flex;gap:8px;margin-bottom:6px;}
+  .addbar input{flex:1;padding:11px 12px;border:1px solid #d8d5cb;border-radius:8px;
+    font-size:15px;background:#fff;}
+  .addbar button{background:#fff;color:var(--navy);border:1px solid #d8d5cb;border-radius:8px;
+    padding:0 14px;font-size:13px;font-weight:600;white-space:nowrap;}
+
+  .search-results{margin-bottom:14px;border-radius:8px;overflow:hidden;}
+  .search-results .res{display:flex;justify-content:space-between;align-items:center;
+    background:#fff;border:1px solid #eae7dd;border-top:none;padding:10px 12px;font-size:13.5px;}
+  .search-results .res:first-child{border-top:1px solid #eae7dd;border-radius:8px 8px 0 0;}
+  .search-results .res:last-child{border-radius:0 0 8px 8px;}
+  .search-results .res b{margin-right:6px;}
+  .search-results .res .add-mini{background:var(--navy);color:#fff;border:none;border-radius:6px;
+    padding:5px 10px;font-size:12px;}
+  .search-results .res .chg-pos{color:var(--bull);} .search-results .res .chg-neg{color:var(--bear);}
+
+  .scan-box{background:#fff;border:1px solid #eae7dd;border-radius:12px;padding:10px 12px;margin-bottom:14px;}
+  .scan-box h3{margin:2px 0 8px;font-size:14px;}
+  .scan-row{display:flex;justify-content:space-between;align-items:center;padding:7px 2px;
+    border-bottom:1px dashed #eee;font-size:13px;}
+  .scan-row:last-child{border-bottom:none;}
+  .scan-row .add-mini{background:var(--navy);color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11.5px;}
+  .scan-note{font-size:11px;color:var(--sub);margin-top:6px;line-height:1.5;}
+
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .toolbar button{flex:1;min-width:90px;background:#fff;border:1px solid #d8d5cb;
+    border-radius:8px;padding:9px 6px;font-size:12.5px;color:var(--navy);font-weight:600;}
+
+  .card{background:var(--card);border-radius:12px;margin-bottom:14px;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden;border:1px solid #eae7dd;}
+  .card-head{display:flex;align-items:center;justify-content:space-between;
+    padding:12px 14px;cursor:pointer;background:#fbfaf7;}
+  .card-head .name{font-size:15px;font-weight:700;}
+  .card-head .code{font-size:12px;color:var(--sub);margin-left:6px;font-weight:400;}
+  .score-badge{min-width:64px;text-align:center;border-radius:20px;padding:5px 10px;
+    font-size:13px;font-weight:800;color:#fff;}
+  .score-row{display:flex;align-items:center;gap:8px;}
+  .del-btn{background:none;border:none;color:#b6b2a4;font-size:16px;padding:2px 6px;}
+
+  .body{padding:0 14px 14px;display:none;border-top:1px solid #f0eee6;}
+  .body.open{display:block;}
+
+  .inputs-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0;}
+  .field label{display:block;font-size:11.5px;color:var(--sub);margin-bottom:3px;}
+  .field input{width:100%;padding:8px 8px;border:1px solid #d8d5cb;border-radius:6px;font-size:14px;}
+
+  .section-title{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:700;
+    margin:14px 0 6px;padding:4px 8px;border-radius:6px;}
+  .section-title.bull{color:var(--bull);background:var(--bull-bg);}
+  .section-title.bear{color:var(--bear);background:var(--bear-bg);}
+
+  .cond{display:flex;align-items:flex-start;gap:8px;padding:7px 4px;font-size:13.5px;
+    border-bottom:1px dashed #eee;}
+  .cond:last-child{border-bottom:none;}
+  .cond input[type=checkbox]{width:18px;height:18px;margin-top:1px;flex-shrink:0;}
+  .cond .auto-tag{font-size:10px;color:#aaa;margin-left:4px;}
+  .cond.hit{background:linear-gradient(90deg,transparent,transparent);}
+
+  .formula-box{margin-top:14px;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;}
+  .formula-box.bull{background:var(--bull-bg);color:#8a2a2d;}
+  .formula-box.bear{background:var(--bear-bg);color:#155c33;}
+  .formula-box b{display:block;font-size:13px;margin-bottom:2px;}
+
+  .verdict{margin-top:14px;padding:12px;border-radius:10px;text-align:center;font-size:14px;font-weight:700;}
+
+  .empty{text-align:center;color:var(--sub);font-size:13px;padding:40px 10px;}
+
+  footer{max-width:720px;margin:0 auto;padding:10px 14px 30px;font-size:11px;color:var(--sub);text-align:center;}
+
+  .legend{display:flex;gap:6px;font-size:10.5px;color:var(--sub);justify-content:center;margin-top:6px;flex-wrap:wrap;}
+  .legend span{display:flex;align-items:center;gap:3px;}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📊 隔日沖選股評分系統</h1>
+  <p>資金 + 量價 + 型態 三位一體｜盤後評分，篩選高勝率標的</p>
+</header>
+
+<div class="wrap">
+
+  <div class="marketbar">
+    <button id="fetchBtn" onclick="fetchMarket()">🔄 更新全市場資料（TWSE）</button>
+    <div id="marketStatus" class="market-status">尚未抓取，請先點左方按鈕</div>
+  </div>
+
+  <div class="addbar">
+    <input id="searchInput" placeholder="輸入代號或名稱搜尋，例如 2330 或 台積電" oninput="onSearchInput()" autocomplete="off">
+    <button onclick="addStockManual()">手動新增</button>
+  </div>
+  <div id="searchResults" class="search-results"></div>
+
+  <div class="toolbar">
+    <button onclick="scanMarket()">⚡ 全市場快速掃描</button>
+    <button onclick="sortByScore()">依總分排序</button>
+    <button onclick="exportJSON()">匯出 JSON</button>
+    <button onclick="document.getElementById('importFile').click()">匯入 JSON</button>
+  </div>
+  <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
+
+  <div id="scanBox" class="scan-box" style="display:none"></div>
+
+  <div id="list"></div>
+  <div id="emptyMsg" class="empty">尚無股票，請先「更新全市場資料」後搜尋加入，或手動新增</div>
+
+</div>
+
+<footer>
+  評分邏輯：做多條件每項成立 +10 分、做空條件每項成立 −10 分，基準 50 分。<br>
+  ≥80 分＝隔日重點做多；20〜80 分＝觀望不操作；≤20 分＝隔日重點做空。<br>
+  自動搜尋資料來源：TWSE OpenAPI（openapi.twse.com.tw），僅提供當日 OHLC 與成交量，
+  漲跌幅／收盤最高比／上影線比／開高走低為自動判定；5日均量、換手率、VWAP、均線、主力買賣超仍需手動確認。<br>
+  本工具僅供策略評估參考，投資有風險，請謹慎評估並嚴設停損。
+</footer>
+
+<script>
+let stocks = [];
+let idCounter = 1;
+
+const BULL_CONDS = [
+  {key:'b1', label:'昨日漲幅 3%～8%', auto:true},
+  {key:'b2', label:'成交量 ＞ 5日均量 2倍', auto:true},
+  {key:'b3', label:'收盤接近最高價（收盤≥最高價98%）', auto:true},
+  {key:'b4', label:'站上 5日、10日均線', auto:false},
+  {key:'b5', label:'VWAP 在收盤價下方', auto:false},
+  {key:'b6', label:'主力／外資／投信至少一方買超', auto:false},
+  {key:'b7', label:'換手率 8%～20%', auto:true},
+];
+
+const BEAR_CONDS = [
+  {key:'s1', label:'昨日爆量（成交量＞5日均量2倍）', auto:true},
+  {key:'s2', label:'長上影線（上影線＞實體1.5倍）', auto:true},
+  {key:'s3', label:'收盤在最低附近（收盤≤最高價96%）', auto:true},
+  {key:'s4', label:'跌破 VWAP', auto:false},
+  {key:'s5', label:'跌破 5日均線', auto:false},
+  {key:'s6', label:'主力大賣超', auto:false},
+  {key:'s7', label:'開高走低', auto:false},
+  {key:'s8', label:'換手率 ＞ 10%', auto:true},
+];
+
+function newStock(code, name, raw){
+  return {
+    id: idCounter++,
+    code, name, open:true, raw: raw||null,
+    inputs: {chg:'', volRatio:'', closeHighPct:'', turnover:'', wickRatio:''},
+    conds: {}
+  };
+}
+
+function addStockManual(){
+  const q = document.getElementById('searchInput').value.trim();
+  if(!q){ alert('請輸入代號或名稱'); return; }
+  stocks.unshift(newStock(q, ''));
+  document.getElementById('searchInput').value='';
+  document.getElementById('searchResults').innerHTML='';
+  render();
+}
+
+// ---------- TWSE 全市場資料 ----------
+let marketData = [];   // [{code,name,open,high,low,close,volume,change}]
+let marketFetchedAt = null;
+
+async function fetchMarket(){
+  const btn = document.getElementById('fetchBtn');
+  const status = document.getElementById('marketStatus');
+  btn.disabled = true; btn.textContent = '抓取中…';
+  status.textContent = '連線 TWSE 開放資料中，請稍候…';
+  try{
+    const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    marketData = data.map(r=>{
+      const num = v => parseFloat(String(v).replace(/,/g,''));
+      return {
+        code: r.Code, name: r.Name,
+        open: num(r.OpeningPrice), high: num(r.HighestPrice),
+        low: num(r.LowestPrice), close: num(r.ClosingPrice),
+        volume: num(r.TradeVolume), change: num(r.Change)
+      };
+    }).filter(r=>!isNaN(r.close) && r.close>0);
+    marketFetchedAt = new Date();
+    status.textContent = `已抓取 ${marketData.length} 檔股票（${marketFetchedAt.toLocaleTimeString('zh-TW')}）｜僅含當日OHLC與成交量，無5日均量／換手率／主力買賣超`;
+  }catch(err){
+    status.textContent = '抓取失敗：' + err.message + '（可能是CORS被擋，建議改用你自己的Termux代理或手動輸入）';
+  }
+  btn.disabled = false; btn.textContent = '🔄 更新全市場資料（TWSE）';
+}
+
+function onSearchInput(){
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  const box = document.getElementById('searchResults');
+  if(!q || marketData.length===0){ box.innerHTML=''; return; }
+  const matches = marketData.filter(r=>
+    r.code.toLowerCase().includes(q) || (r.name && r.name.toLowerCase().includes(q))
+  ).slice(0,8);
+  if(matches.length===0){ box.innerHTML = '<div class="res">查無符合資料（記得先按上方「更新全市場資料」）</div>'; return; }
+  box.innerHTML = matches.map(r=>{
+    const chgPct = r.close - r.change !== 0 ? (r.change/(r.close-r.change)*100) : 0;
+    const cls = chgPct>=0 ? 'chg-pos' : 'chg-neg';
+    return `<div class="res">
+      <span><b>${r.name}</b><span style="color:var(--sub)">${r.code}</span>　
+      <span class="${cls}">${chgPct.toFixed(2)}%</span></span>
+      <button class="add-mini" onclick="addStockFromMarket('${r.code}')">＋加入</button>
+    </div>`;
+  }).join('');
+}
+
+function addStockFromMarket(code){
+  const r = marketData.find(x=>x.code===code);
+  if(!r) return;
+  const s = newStock(r.code, r.name, r);
+  applyRawToInputs(s);
+  stocks.unshift(s);
+  document.getElementById('searchInput').value='';
+  document.getElementById('searchResults').innerHTML='';
+  render();
+}
+
+function applyRawToInputs(s){
+  if(!s.raw) return;
+  const r = s.raw;
+  const prevClose = r.close - r.change;
+  const chgPct = prevClose ? (r.change/prevClose*100) : 0;
+  const closeHighPct = r.high ? (r.close/r.high*100) : 0;
+  const body = Math.abs(r.close - r.open);
+  const upperWick = r.high - Math.max(r.open, r.close);
+  const wickRatio = body>0 ? (upperWick/body) : (upperWick>0 ? 99 : 0);
+  s.inputs.chg = chgPct.toFixed(2);
+  s.inputs.closeHighPct = closeHighPct.toFixed(2);
+  s.inputs.wickRatio = wickRatio.toFixed(2);
+  applyAutoConds(s);
+  // 開高走低近似判定：開盤價 > 收盤價
+  s.conds.s7 = r.open > r.close;
+}
+
+function scanMarket(){
+  const box = document.getElementById('scanBox');
+  if(marketData.length===0){
+    alert('請先點「更新全市場資料」抓取 TWSE 當日資料');
+    return;
+  }
+  const scored = marketData.map(r=>{
+    const tmp = newStock(r.code, r.name, r);
+    applyRawToInputs(tmp);
+    return {r, score: computeScore(tmp)};
+  });
+  const bulls = scored.filter(x=>x.score>=70).sort((a,b)=>b.score-a.score).slice(0,10);
+  const bears = scored.filter(x=>x.score<=30).sort((a,b)=>a.score-b.score).slice(0,10);
+
+  const row = x => `<div class="scan-row">
+    <span>${x.r.name} <span style="color:var(--sub)">${x.r.code}</span></span>
+    <span style="display:flex;align-items:center;gap:8px;">
+      <b style="color:${x.score>=70?'var(--bull)':'var(--bear)'}">${x.score}分</b>
+      <button class="add-mini" onclick="addStockFromMarket('${x.r.code}')">＋加入追蹤</button>
+    </span>
+  </div>`;
+
+  box.style.display = 'block';
+  box.innerHTML = `
+    <h3>🐂 偏多候選（僅價格型態初篩，≥70分）</h3>
+    ${bulls.length ? bulls.map(row).join('') : '<div class="scan-row">今日無符合標的</div>'}
+    <h3 style="margin-top:14px;">🐻 偏空候選（僅價格型態初篩，≤30分）</h3>
+    ${bears.length ? bears.map(row).join('') : '<div class="scan-row">今日無符合標的</div>'}
+    <div class="scan-note">※ 此快速掃描僅用當日 OHLC／成交量計算，不含5日均量、換手率、主力買賣超、VWAP、均線，僅供初篩參考，仍需點進個股卡片手動確認其餘條件。</div>
+  `;
+}
+
+function removeStock(id){
+  stocks = stocks.filter(s=>s.id!==id);
+  render();
+}
+
+function toggleOpen(id){
+  const s = stocks.find(x=>x.id===id);
+  s.open = !s.open;
+  render();
+}
+
+function updateInput(id, field, val){
+  const s = stocks.find(x=>x.id===id);
+  s.inputs[field] = val;
+  applyAutoConds(s);
+  render(id);
+}
+
+function toggleCond(id, key){
+  const s = stocks.find(x=>x.id===id);
+  s.conds[key] = !s.conds[key];
+  render(id);
+}
+
+function applyAutoConds(s){
+  const n = f => parseFloat(f);
+  const chg = n(s.inputs.chg), vol = n(s.inputs.volRatio),
+        chp = n(s.inputs.closeHighPct), tov = n(s.inputs.turnover),
+        wick = n(s.inputs.wickRatio);
+
+  s.conds.b1 = !isNaN(chg) && chg>=3 && chg<=8;
+  s.conds.b2 = !isNaN(vol) && vol>=2;
+  s.conds.b3 = !isNaN(chp) && chp>=98;
+  s.conds.b7 = !isNaN(tov) && tov>=8 && tov<=20;
+
+  s.conds.s1 = !isNaN(vol) && vol>=2;
+  s.conds.s2 = !isNaN(wick) && wick>=1.5;
+  s.conds.s3 = !isNaN(chp) && chp<=96;
+  s.conds.s8 = !isNaN(tov) && tov>10;
+}
+
+function computeScore(s){
+  let score = 50;
+  BULL_CONDS.forEach(c=>{ if(s.conds[c.key]) score += 10; });
+  BEAR_CONDS.forEach(c=>{ if(s.conds[c.key]) score -= 10; });
+  return score;
+}
+
+function verdictOf(score){
+  if(score>=80) return {text:'隔日重點做多', color:'var(--bull)', bg:'var(--bull-bg)', tcolor:'#8a2a2d'};
+  if(score<=20) return {text:'隔日重點做空', color:'var(--bear)', bg:'var(--bear-bg)', tcolor:'#155c33'};
+  return {text:'觀望 / 不操作', color:'#8a8a8a', bg:'#f0efe9', tcolor:'#6b6f7d'};
+}
+
+function badgeColor(score){
+  if(score>=80) return 'var(--bull)';
+  if(score<=20) return 'var(--bear)';
+  return '#9a9a9a';
+}
+
+function condRow(s, c, group){
+  const checked = !!s.conds[c.key];
+  const autoTag = c.auto ? '<span class="auto-tag">(自動判定)</span>' : '<span class="auto-tag">(手動勾選)</span>';
+  return `<label class="cond">
+    <input type="checkbox" ${checked?'checked':''} ${c.auto?'disabled':''}
+      onchange="toggleCond(${s.id}, '${c.key}')">
+    <span>${c.label} ${autoTag}</span>
+  </label>`;
+}
+
+function render(focusId){
+  const list = document.getElementById('list');
+  const emptyMsg = document.getElementById('emptyMsg');
+  emptyMsg.style.display = stocks.length ? 'none' : 'block';
+  list.innerHTML = stocks.map(s=>{
+    const score = computeScore(s);
+    const v = verdictOf(score);
+    const bullHits = BULL_CONDS.filter(c=>s.conds[c.key]).length;
+    const bearHits = BEAR_CONDS.filter(c=>s.conds[c.key]).length;
+
+    return `
+    <div class="card">
+      <div class="card-head" onclick="toggleOpen(${s.id})">
+        <div>
+          <span class="name">${s.name||'（未命名）'}</span>
+          <span class="code">${s.code||''}</span><br>
+          <span style="font-size:11.5px;color:var(--sub)">做多命中 ${bullHits}/7　做空命中 ${bearHits}/8</span>
+        </div>
+        <div class="score-row">
+          <div class="score-badge" style="background:${badgeColor(score)}">${score}分</div>
+          <button class="del-btn" onclick="event.stopPropagation();removeStock(${s.id})">✕</button>
+        </div>
+      </div>
+      <div class="body ${s.open?'open':''}">
+        <div class="inputs-grid">
+          <div class="field"><label>昨日漲跌幅 (%)</label>
+            <input type="number" step="0.1" value="${s.inputs.chg}" placeholder="例：5.2"
+              oninput="updateInput(${s.id},'chg',this.value)"></div>
+          <div class="field"><label>量能倍數（今量/5日均量）</label>
+            <input type="number" step="0.1" value="${s.inputs.volRatio}" placeholder="例：2.5"
+              oninput="updateInput(${s.id},'volRatio',this.value)"></div>
+          <div class="field"><label>收盤／最高價 (%)</label>
+            <input type="number" step="0.1" value="${s.inputs.closeHighPct}" placeholder="例：98.5"
+              oninput="updateInput(${s.id},'closeHighPct',this.value)"></div>
+          <div class="field"><label>換手率 (%)</label>
+            <input type="number" step="0.1" value="${s.inputs.turnover}" placeholder="例：12"
+              oninput="updateInput(${s.id},'turnover',this.value)"></div>
+          <div class="field" style="grid-column:1/3"><label>上影線／實體比（做空用）</label>
+            <input type="number" step="0.1" value="${s.inputs.wickRatio}" placeholder="例：1.8"
+              oninput="updateInput(${s.id},'wickRatio',this.value)"></div>
+        </div>
+
+        <div class="section-title bull">🐂 做多條件（7項）</div>
+        ${BULL_CONDS.map(c=>condRow(s,c,'bull')).join('')}
+        <div class="formula-box bull"><b>做多公式</b>爆量＋收最高附近＋主力買超＋站上5MA＋換手率8%以上</div>
+
+        <div class="section-title bear">🐻 做空條件（8項）</div>
+        ${BEAR_CONDS.map(c=>condRow(s,c,'bear')).join('')}
+        <div class="formula-box bear"><b>做空公式</b>爆量＋長上影＋收最低附近＋跌破5MA＋主力賣超＋跌破VWAP</div>
+
+        <div class="verdict" style="background:${v.bg};color:${v.tcolor}">
+          總分 ${score} 分　${v.text}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  if(focusId){
+    // keep card open state already handled via s.open
+  }
+}
+
+function sortByScore(){
+  stocks.sort((a,b)=>computeScore(b)-computeScore(a));
+  render();
+}
+
+function exportJSON(){
+  const data = JSON.stringify(stocks, null, 2);
+  const blob = new Blob([data], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'cdp_score_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importJSON(evt){
+  const file = evt.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const data = JSON.parse(e.target.result);
+      idCounter = Math.max(idCounter, ...data.map(s=>s.id||0)) + 1;
+      stocks = data;
+      render();
+    }catch(err){ alert('檔案格式錯誤：' + err.message); }
+  };
+  reader.readAsText(file);
+  evt.target.value = '';
+}
+
+render();
+</script>
+</body>
+</html>
