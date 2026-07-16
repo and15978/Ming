@@ -537,9 +537,10 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
       </div>
       <div class="rt-block">
         <button class="rt-toggle" data-uid="${uid}">▶ 開始即時報價</button>
-        <button class="chart-toggle" data-uid="${uid}" style="background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;width:auto;margin-top:0;margin-left:8px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">📈 走勢圖</button>
+        <button class="chart-toggle" data-uid="${uid}" style="background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;width:auto;margin-top:0;margin-left:8px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">📈 K線圖</button>
         <div class="rt-display" id="${uid}-rt"></div>
         <canvas id="${uid}-chart" style="display:none;width:100%;height:200px;margin-top:10px;border-radius:8px;background:#0a0c0f;"></canvas>
+        <div id="${uid}-tv" style="display:none;margin-top:10px;border-radius:8px;overflow:hidden;"></div>
       </div>
     </div>`;
   });
@@ -574,14 +575,65 @@ const priceHistory = {}; // uid -> [{time, price}]
 
 function toggleChart(uid){
   const canvas = document.getElementById(`${uid}-chart`);
-  if(!canvas) return;
-  if(canvas.style.display === 'none'){
-    canvas.style.display = 'block';
-    // 初始化這檔的價格紀錄
-    if(!priceHistory[uid]) priceHistory[uid] = [];
-    drawChart(uid);
-  } else {
+  const tv = document.getElementById(`${uid}-tv`);
+  if(!canvas || !tv) return;
+
+  // 切換顯示：先隱藏canvas，改用TradingView
+  if(tv.style.display === 'none'){
     canvas.style.display = 'none';
+    tv.style.display = 'block';
+    if(!tv.dataset.loaded){
+      const d = cardDataStore[uid];
+      const code = d.code;
+      // 判斷上市(TWSE)或上櫃(TPEX)
+      const exchange = code.length === 4 && parseInt(code) >= 6000 ? 'TPEX' : 'TWSE';
+      const symbol = `${exchange}:${code}`;
+
+      // TradingView Widget設定
+      const script = document.createElement('script');
+      script.src = 'https://s3.tradingview.com/tv.js';
+      script.onload = () => {
+        new TradingView.widget({
+          container_id: `${uid}-tv`,
+          symbol: symbol,
+          interval: '5',         // 5分K
+          timezone: 'Asia/Taipei',
+          theme: 'dark',
+          style: '1',            // K線圖
+          locale: 'zh_TW',
+          toolbar_bg: '#131720',
+          enable_publishing: false,
+          hide_top_toolbar: false,
+          hide_legend: false,
+          save_image: false,
+          height: 400,
+          width: '100%',
+          studies: [],
+          // CDP價位線用alert_line標示
+          overrides: {
+            'paneProperties.background': '#0a0c0f',
+            'paneProperties.backgroundType': 'solid',
+          },
+          // 把CDP各水平線加進去（TradingView Widget支援 lines 參數）
+          lines: [
+            { price: d.ah,  color: '#ff5b5b', width: 1, style: 2, title: `AH ${d.ah.toFixed(2)}` },
+            { price: d.nh,  color: '#ff8d8d', width: 1, style: 2, title: `NH ${d.nh.toFixed(2)}` },
+            { price: d.cdp, color: '#e0a72e', width: 2, style: 0, title: `CDP ${d.cdp.toFixed(2)}` },
+            { price: d.nl,  color: '#5fdc8a', width: 1, style: 2, title: `NL ${d.nl.toFixed(2)}` },
+            { price: d.al,  color: '#2fbf63', width: 1, style: 2, title: `AL ${d.al.toFixed(2)}` },
+          ],
+        });
+      };
+      // 如果已載入過TradingView library
+      if(window.TradingView){
+        script.onload();
+      } else {
+        document.head.appendChild(script);
+      }
+      tv.dataset.loaded = '1';
+    }
+  } else {
+    tv.style.display = 'none';
   }
 }
 
