@@ -177,7 +177,7 @@ const BULL_CONDS = [
   {key:'b3', label:'收盤接近最高價（收盤≥最高價98%）', auto:true},
   {key:'b4', label:'站上 5日、10日均線', auto:false},
   {key:'b5', label:'VWAP 在收盤價下方', auto:false},
-  {key:'b6', label:'主力／外資／投信至少一方買超', auto:false},
+  {key:'b6', label:'主力／外資／投信至少一方買超', auto:false, smart:true},
   {key:'b7', label:'換手率 8%～20%', auto:true},
 ];
 
@@ -187,7 +187,7 @@ const BEAR_CONDS = [
   {key:'s3', label:'收盤在最低附近（收盤≤最高價96%）', auto:true},
   {key:'s4', label:'跌破 VWAP', auto:false},
   {key:'s5', label:'跌破 5日均線', auto:false},
-  {key:'s6', label:'主力大賣超', auto:false},
+  {key:'s6', label:'主力大賣超', auto:false, smart:true},
   {key:'s7', label:'開高走低', auto:false},
   {key:'s8', label:'換手率 ＞ 10%', auto:true},
 ];
@@ -252,7 +252,10 @@ async function fetchMarket(){
   if(!loaded){
     status.textContent = '所有來源都讀取失敗。請確認 data/latest.json 是否已上傳到同一個 repo，或改用手動輸入。';
   } else {
-    await fetchDayTradeStats(status);
+    const withDT = marketData.filter(m=>m.dayTradeVolume!==undefined).length;
+    status.textContent += withDT>0
+      ? `｜含 ${withDT} 檔當沖成交量資料`
+      : `｜尚無當沖成交量欄位（需先跑過新版 fetch_twse.py 產生的資料）`;
     await fetchVolumeHistory(status);
   }
   btn.disabled = false; btn.textContent = '🔄 更新全市場資料';
@@ -301,35 +304,16 @@ function volumeTrend(code, todayVolume, nDays){
 }
 
 // ---------- TWSE 每日當日沖銷交易標的及統計 (TWTB4U) ----------
-async function fetchDayTradeStats(status){
-  try{
-    const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U', {cache:'no-store'});
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const raw = await res.json();
-    const rows = Array.isArray(raw) ? raw : (raw.data || []);
-    const num = v => v===undefined||v===null||v==='' ? NaN : parseFloat(String(v).replace(/,/g,''));
-    const pick = (r,...keys) => { for(const k of keys){ if(r[k]!==undefined) return r[k]; } return undefined; };
-    const map = {};
-    rows.forEach(r=>{
-      const code = pick(r,'Code','code','證券代號');
-      const shares = num(pick(r,'TotalTradeVolume','當日沖銷交易總成交股數','buySellVolume'));
-      if(code && !isNaN(shares)) map[code] = shares;
-    });
-    let matched = 0;
-    marketData.forEach(m=>{
-      if(map[m.code]!==undefined){ m.dayTradeVolume = map[m.code]; matched++; }
-    });
-    if(status) status.textContent += `｜已比對 ${matched} 檔當沖統計（TWTB4U）`;
-  }catch(err){
-    if(status) status.textContent += `｜當沖統計抓取失敗：${err.message}（此欄位需手動填）`;
-  }
-}
+// 已改由 fetch_twse.py 在後端抓好、寫進 data/latest.json 的 DayTradeVolume 欄位，
+// normalizeRow() 會自動解析，這裡不再從瀏覽器端另外呼叫 TWSE。
 
 // 嘗試相容不同欄位命名，儘量從一筆資料中解析出 code/name/open/high/low/close/volume/change
 function normalizeRow(r){
   if(!r) return null;
   const num = v => v===undefined||v===null||v==='' ? NaN : parseFloat(String(v).replace(/,/g,''));
   const pick = (...keys) => { for(const k of keys){ if(r[k]!==undefined) return r[k]; } return undefined; };
+  const dtv = num(pick('DayTradeVolume'));
+  const totalInst = num(pick('TotalInstNet'));
   return {
     code: pick('Code','code','stockNo','證券代號'),
     name: pick('Name','name','股票名稱') || '',
@@ -338,7 +322,9 @@ function normalizeRow(r){
     low: num(pick('LowestPrice','low','最低價')),
     close: num(pick('ClosingPrice','close','收盤價')),
     volume: num(pick('TradeVolume','volume','成交股數')),
-    change: num(pick('Change','change','漲跌價差')) || 0
+    change: num(pick('Change','change','漲跌價差')) || 0,
+    dayTradeVolume: isNaN(dtv) ? undefined : dtv,      // 當日沖銷成交股數（來自你 fetch_twse.py 存的 DayTradeVolume）
+    totalInstNet: isNaN(totalInst) ? undefined : totalInst  // 三大法人買賣超（股）
   };
 }
 
@@ -399,6 +385,11 @@ function applyRawToInputs(s){
   applyAutoConds(s);
   // 開高走低近似判定：開盤價 > 收盤價
   s.conds.s7 = r.open > r.close;
+  // 主力/外資/投信買賣超（三大法人合計），來自 fetch_twse.py 存的 TotalInstNet；有資料才預設帶入，仍可手動改
+  if(r.totalInstNet!==undefined && !isNaN(r.totalInstNet)){
+    s.conds.b6 = r.totalInstNet > 0;
+    s.conds.s6 = r.totalInstNet < 0;
+  }
 }
 
 // ---------- CDP 逆勢操作指標 ----------
@@ -616,7 +607,8 @@ function badgeColor(score){
 
 function condRow(s, c, group){
   const checked = !!s.conds[c.key];
-  const autoTag = c.auto ? '<span class="auto-tag">(自動判定)</span>' : '<span class="auto-tag">(手動勾選)</span>';
+  const autoTag = c.auto ? '<span class="auto-tag">(自動判定)</span>'
+    : (c.smart ? '<span class="auto-tag">(有資料時自動帶入，可修改)</span>' : '<span class="auto-tag">(手動勾選)</span>');
   return `<label class="cond">
     <input type="checkbox" ${checked?'checked':''} ${c.auto?'disabled':''}
       onchange="toggleCond(${s.id}, '${c.key}')">
@@ -682,7 +674,7 @@ function render(focusId){
         ${renderCDPTable(s)}
 
         <div class="section-title" style="color:#5b4bb8;background:#eeecfb;">📦 當沖／隔日張數（全市場統計）</div>
-        <div class="cdp-note" style="margin:2px 0 8px;">資料來源：TWSE 每日當日沖銷交易統計（TWTB4U），自動帶入後仍可手動修改。</div>
+        <div class="cdp-note" style="margin:2px 0 8px;">資料來源：你的 fetch_twse.py 抓的當日沖銷成交量（DayTradeVolume），自動帶入後仍可手動修改；若欄位是空的，代表資料還沒重新產生。</div>
         <div class="lots-grid">
           <div class="field"><label>當沖成交張數</label>
             <input type="number" step="1" value="${s.inputs.dayTradeLots}" placeholder="0"
