@@ -110,6 +110,10 @@
   .chart-legend span{display:flex;align-items:center;gap:3px;}
   .chart-legend i{width:14px;height:2px;display:inline-block;}
 
+  .trend-box{display:flex;gap:8px;margin-top:8px;}
+  .trend-item{flex:1;background:#fff;border:1px solid #eae7dd;border-radius:8px;
+    padding:8px 6px;text-align:center;font-size:12.5px;display:flex;flex-direction:column;gap:3px;}
+
   .empty{text-align:center;color:var(--sub);font-size:13px;padding:40px 10px;}
 
   footer{max-width:720px;margin:0 auto;padding:10px 14px 30px;font-size:11px;color:var(--sub);text-align:center;}
@@ -130,7 +134,7 @@
 
   <div class="marketbar">
     <button id="fetchBtn" onclick="fetchMarket()">🔄 更新全市場資料</button>
-    <div id="marketStatus" class="market-status">尚未抓取，請先點左方按鈕</div>
+    <div id="marketStatus" class="market-status">頁面開啟後會自動抓取，請稍候…</div>
   </div>
 
   <div class="addbar">
@@ -247,8 +251,78 @@ async function fetchMarket(){
   }
   if(!loaded){
     status.textContent = '所有來源都讀取失敗。請確認 data/latest.json 是否已上傳到同一個 repo，或改用手動輸入。';
+  } else {
+    await fetchDayTradeStats(status);
+    await fetchVolumeHistory(status);
   }
   btn.disabled = false; btn.textContent = '🔄 更新全市場資料';
+}
+
+// ---------- 歷史總成交張數（近1/3/5日趨勢）----------
+// 讀取 data/YYYY-MM-DD.json 這種按日期存的檔案，往前找最近幾個有資料的交易日
+let volumeHistory = {};  // { code: [{date, volume}, ...] }（由近到遠）
+
+async function fetchVolumeHistory(status){
+  volumeHistory = {};
+  const days = [];
+  let d = new Date();
+  let tried = 0;
+  while(days.length < 5 && tried < 15){
+    d.setDate(d.getDate()-1); tried++;
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+    const dateStr = `${y}-${m}-${day}`;
+    try{
+      const res = await fetch(`data/${dateStr}.json`, {cache:'no-store'});
+      if(!res.ok) continue;
+      const raw = await res.json();
+      const rows = Array.isArray(raw) ? raw : (raw.data || raw.list || raw.stocks || []);
+      const mapped = rows.map(normalizeRow).filter(r=>r && r.code && !isNaN(r.volume));
+      if(mapped.length===0) continue;
+      days.push({date: dateStr, rows: mapped});
+    }catch(e){ /* 該天可能是假日或還沒存檔，略過 */ }
+  }
+  days.forEach(day=>{
+    day.rows.forEach(r=>{
+      if(!volumeHistory[r.code]) volumeHistory[r.code] = [];
+      volumeHistory[r.code].push({date: day.date, volume: r.volume});
+    });
+  });
+  if(status) status.textContent += `｜已載入 ${days.length} 個交易日歷史張數`;
+}
+
+// 用今天(marketData裡的volume)+過去N天歷史，算出張數變化%與方向
+function volumeTrend(code, todayVolume, nDays){
+  const hist = volumeHistory[code];
+  if(!hist || hist.length < nDays) return null;
+  const past = hist[nDays-1].volume;
+  if(!past) return null;
+  const pct = ((todayVolume - past) / past) * 100;
+  return { pct, dir: pct>3 ? 'up' : (pct<-3 ? 'down' : 'flat') };
+}
+
+// ---------- TWSE 每日當日沖銷交易標的及統計 (TWTB4U) ----------
+async function fetchDayTradeStats(status){
+  try{
+    const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/TWTB4U', {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const raw = await res.json();
+    const rows = Array.isArray(raw) ? raw : (raw.data || []);
+    const num = v => v===undefined||v===null||v==='' ? NaN : parseFloat(String(v).replace(/,/g,''));
+    const pick = (r,...keys) => { for(const k of keys){ if(r[k]!==undefined) return r[k]; } return undefined; };
+    const map = {};
+    rows.forEach(r=>{
+      const code = pick(r,'Code','code','證券代號');
+      const shares = num(pick(r,'TotalTradeVolume','當日沖銷交易總成交股數','buySellVolume'));
+      if(code && !isNaN(shares)) map[code] = shares;
+    });
+    let matched = 0;
+    marketData.forEach(m=>{
+      if(map[m.code]!==undefined){ m.dayTradeVolume = map[m.code]; matched++; }
+    });
+    if(status) status.textContent += `｜已比對 ${matched} 檔當沖統計（TWTB4U）`;
+  }catch(err){
+    if(status) status.textContent += `｜當沖統計抓取失敗：${err.message}（此欄位需手動填）`;
+  }
 }
 
 // 嘗試相容不同欄位命名，儘量從一筆資料中解析出 code/name/open/high/low/close/volume/change
@@ -310,8 +384,18 @@ function applyRawToInputs(s){
   s.inputs.chg = chgPct.toFixed(2);
   s.inputs.closeHighPct = closeHighPct.toFixed(2);
   s.inputs.wickRatio = wickRatio.toFixed(2);
-  // 今日收盤已知，可自動帶入「昨收」欄位（=今日的收盤，作為明天計算CDP用的昨收）
+  // 今日OHLC已知，可直接作為「下一交易日」CDP計算用的昨收/昨高/昨低
   s.inputs.prevClose = r.close.toFixed(2);
+  s.inputs.prevHigh = r.high.toFixed(2);
+  s.inputs.prevLow = r.low.toFixed(2);
+
+  // 當沖／隔日張數：用TWTB4U當沖統計（若有抓到）自動帶入，1張=1000股
+  if(r.dayTradeVolume!==undefined && !isNaN(r.dayTradeVolume)){
+    const dayTradeLots = Math.round(r.dayTradeVolume/1000);
+    const totalLots = Math.round((r.volume||0)/1000);
+    s.inputs.dayTradeLots = dayTradeLots;
+    s.inputs.overnightLots = Math.max(totalLots - dayTradeLots, 0);
+  }
   applyAutoConds(s);
   // 開高走低近似判定：開盤價 > 收盤價
   s.conds.s7 = r.open > r.close;
@@ -357,6 +441,23 @@ function cdpZoneLabel(cdp, close){
   if(close >= cdp.nl) return 'NL～CDP 之間（多空分界偏空）';
   if(close >= cdp.al) return 'AL～NL 之間（偏空關卡）';
   return 'AL 之下（弱勢破底區）';
+}
+
+function renderVolumeTrendBox(s){
+  const todayVol = s.raw.volume;
+  const periods = [1,3,5];
+  const items = periods.map(n=>{
+    const t = volumeTrend(s.code, todayVol, n);
+    if(!t) return `<div class="trend-item"><span>${n}日</span><span style="color:var(--sub)">資料不足</span></div>`;
+    const arrow = t.dir==='up' ? '▲' : (t.dir==='down' ? '▼' : '→');
+    const color = t.dir==='up' ? 'var(--bull)' : (t.dir==='down' ? 'var(--bear)' : 'var(--sub)');
+    return `<div class="trend-item"><span>${n}日</span><span style="color:${color};font-weight:700">${arrow} ${t.pct>0?'+':''}${t.pct.toFixed(1)}%</span></div>`;
+  }).join('');
+  return `
+    <div class="section-title" style="color:#b06a12;background:#fdf0dc;">📊 總成交張數 1／3／5 日趨勢</div>
+    <div class="trend-box">${items}</div>
+    <div class="cdp-note">※ 目前僅「總成交張數」有歷史資料可比對；「當沖張數」只有今天這筆，尚無歷史趨勢（需累積幾天資料後才有）。</div>
+  `;
 }
 
 // ---------- 走勢圖（OHLC + CDP 關卡）----------
@@ -566,6 +667,7 @@ function render(focusId){
         </div>
 
         <div class="section-title" style="color:var(--gold);background:#faf3e2;">🎯 CDP 逆勢操作指標</div>
+        <div class="cdp-note" style="margin:2px 0 8px;">※ 已自動帶入今日OHLC，算出的是「下一個交易日」的CDP關卡；若要看今天的關卡，請自行改填前一交易日數字。</div>
         <div class="inputs-grid">
           <div class="field"><label>昨收</label>
             <input type="number" step="0.01" value="${s.inputs.prevClose}" placeholder="例：58.3"
@@ -579,18 +681,20 @@ function render(focusId){
         </div>
         ${renderCDPTable(s)}
 
-        <div class="section-title" style="color:#5b4bb8;background:#eeecfb;">📦 當沖／隔日張數</div>
+        <div class="section-title" style="color:#5b4bb8;background:#eeecfb;">📦 當沖／隔日張數（全市場統計）</div>
+        <div class="cdp-note" style="margin:2px 0 8px;">資料來源：TWSE 每日當日沖銷交易統計（TWTB4U），自動帶入後仍可手動修改。</div>
         <div class="lots-grid">
-          <div class="field"><label>當沖張數</label>
+          <div class="field"><label>當沖成交張數</label>
             <input type="number" step="1" value="${s.inputs.dayTradeLots}" placeholder="0"
               oninput="updateInput(${s.id},'dayTradeLots',this.value)"></div>
-          <div class="field"><label>隔日持有張數</label>
+          <div class="field"><label>推估隔日轉倉張數</label>
             <input type="number" step="1" value="${s.inputs.overnightLots}" placeholder="0"
               oninput="updateInput(${s.id},'overnightLots',this.value)"></div>
-          <div class="field"><label>總張數</label>
+          <div class="field"><label>總成交張數</label>
             <input type="text" disabled value="${(parseFloat(s.inputs.dayTradeLots)||0)+(parseFloat(s.inputs.overnightLots)||0)}"
               style="background:#f5f3ee;color:var(--sub);"></div>
         </div>
+        ${s.raw ? renderVolumeTrendBox(s) : ''}
 
         ${s.raw ? `
         <div class="section-title" style="color:var(--navy);background:#eef0f7;">📈 今日走勢圖（含CDP關卡）</div>
@@ -651,6 +755,7 @@ function importJSON(evt){
 }
 
 render();
+fetchMarket();  // 頁面一打開就自動抓一次最新資料，不用手動點按鈕
 </script>
 </body>
 </html>
