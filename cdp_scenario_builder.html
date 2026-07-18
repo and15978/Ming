@@ -540,7 +540,7 @@ function renderResults(results, areaId='resultsArea', cardId='resultsCard', empt
         <button class="chart-toggle" data-uid="${uid}" style="background:transparent;border:1px solid var(--gold);color:var(--gold);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;width:auto;margin-top:0;margin-left:8px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">📈 K線圖</button>
         <div class="rt-display" id="${uid}-rt"></div>
         <canvas id="${uid}-chart" style="display:none;width:100%;height:200px;margin-top:10px;border-radius:8px;background:#0a0c0f;"></canvas>
-        <div id="${uid}-tv" style="display:none;margin-top:10px;border-radius:8px;overflow:hidden;"></div>
+        <div id="${uid}-tv" style="display:none;margin-top:10px;border-radius:8px;overflow:hidden;min-height:420px;"></div>
       </div>
     </div>`;
   });
@@ -606,7 +606,7 @@ function toggleChart(uid){
           hide_top_toolbar: false,
           hide_legend: false,
           save_image: false,
-          height: 400,
+          height: 420,
           width: '100%',
           studies: [],
           // CDP價位線用alert_line標示
