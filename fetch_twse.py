@@ -13,7 +13,8 @@ fetch_twse.py — 在 GitHub Actions 伺服器上執行，抓取證交所全市�
 
 附加資料（同時抓取，合併進每一檔股票的資料中）：
   - T86  三大法人買賣超（外資/投信/自營商）
-  - TWTB4U 借券賣出餘額（與前一交易日比較，判斷借券增加/減少）
+  - TWTB4U 每日當日沖銷交易標的及統計（個股當日沖銷成交股數）
+  - TWTB4U 借券賣出餘額（沿用舊邏輯，欄位關鍵字若對不上會是 None，不影響其他資料）
 """
 import json
 import os
@@ -103,6 +104,48 @@ def fetch_t86(twse_date):
         return result
     except Exception as e:
         print(f"  [T86] 抓取失敗：{e}")
+        return {}
+
+
+# ── 每日當日沖銷交易標的及統計 TWTB4U（真正的當沖成交量）───────────────────
+def fetch_daytrading(twse_date):
+    """回傳 {股票代號: 當日沖銷成交股數}（買進+賣出成交股數相加，單位：股）"""
+    try:
+        url = TWTB4U_URL.format(date=twse_date)
+        payload = http_get_json(url)
+        if payload.get("stat") != "OK" or not payload.get("data"):
+            print(f"  [當沖統計] 無資料（{twse_date}，可能是假日或尚未公布）")
+            return {}
+        fields = payload["fields"]
+
+        def find(keywords, excludes=()):
+            for i, f in enumerate(fields):
+                if all(k in f for k in keywords) and all(e not in f for e in excludes):
+                    return i
+            return None
+
+        idx_code   = find(["代號"])
+        idx_buy    = find(["買進", "成交股數"])
+        idx_sell   = find(["賣出", "成交股數"])
+        idx_total  = find(["當日沖銷交易總成交股數"])
+
+        result = {}
+        for row in payload["data"]:
+            code = str(row[idx_code]).strip() if idx_code is not None else None
+            if not code:
+                continue
+            if idx_total is not None:
+                vol = to_int(row[idx_total])
+            else:
+                buy = to_int(row[idx_buy]) if idx_buy is not None else None
+                sell = to_int(row[idx_sell]) if idx_sell is not None else None
+                vol = (buy or 0) + (sell or 0) if (buy is not None or sell is not None) else None
+            if vol is not None:
+                result[code] = vol
+        print(f"  [當沖統計] 取得 {len(result)} 檔當日沖銷成交量資料")
+        return result
+    except Exception as e:
+        print(f"  [當沖統計] 抓取失敗：{e}")
         return {}
 
 
@@ -262,6 +305,9 @@ def merge_extra_data(stocks, date_iso, data_dir="data"):
     print(f"正在抓取三大法人資料（T86 {twse_date}）...")
     t86_map = fetch_t86(twse_date)
 
+    print(f"正在抓取當日沖銷成交量資料（TWTB4U {twse_date}）...")
+    daytrading_map = fetch_daytrading(twse_date)
+
     print(f"正在抓取借券餘額資料（TWTB4U {twse_date}）...")
     short_map = fetch_twtb4u(twse_date)
     prev_short = load_prev_short_balance(data_dir)
@@ -273,6 +319,8 @@ def merge_extra_data(stocks, date_iso, data_dir="data"):
         s["TrustNet"]     = t.get("TrustNet")        # 投信買賣超
         s["DealerNet"]    = t.get("DealerNet")       # 自營商買賣超
         s["TotalInstNet"] = t.get("TotalInstNet")    # 三大法人買賣超
+
+        s["DayTradeVolume"] = daytrading_map.get(code)  # 當日沖銷成交股數（股）
 
         bal = short_map.get(code)
         s["ShortBalance"] = bal                      # 借券餘額（張）
