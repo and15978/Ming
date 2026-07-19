@@ -146,10 +146,11 @@
 
 <!-- STEP 2 -->
 <div class="section">
-  <div class="step-label">STEP 2 ・ 資金輪動（前三強 / 前三弱族群）</div>
-  <label>今日前三強族群（逗號分隔，例：航運, AI伺服器, 軍工）</label>
+  <div class="step-label">STEP 2 ・ 資金輪動（讀取資料後自動判斷，也可手動覆蓋）</div>
+  <div id="groupRankInfo" style="font-size:12.5px; color:var(--muted); line-height:1.8;">尚未讀取資料，或找不到 data/industry_map.json（族群對照表）。可以先在 STEP 3 按「讀取每日自動更新資料」，或直接在下面手動輸入。</div>
+  <label>前三強族群（逗號分隔，會依此判斷做多的「同族群最強」）</label>
   <input type="text" id="strongGroups" placeholder="族群1, 族群2, 族群3">
-  <label>今日前三弱族群（逗號分隔）</label>
+  <label>前三弱族群（逗號分隔，會依此判斷放空的「同族群最弱」）</label>
   <input type="text" id="weakGroups" placeholder="族群1, 族群2, 族群3">
 </div>
 
@@ -289,8 +290,8 @@ function renderStockList(){
         <div><label>股票名稱</label><input type="text" data-f="name" value="${s.name}" placeholder="旺宏"></div>
       </div>
       <div class="grid2">
-        <div><label>所屬族群</label><input type="text" data-f="group" value="${s.group}" placeholder="半導體"></div>
-        <div><label>族群強弱</label>
+        <div><label>所屬族群（自動帶入，可覆蓋）</label><input type="text" data-f="group" value="${s.group}" placeholder="半導體"></div>
+        <div><label>族群強弱（找不到資料時手動選）</label>
           <select data-f="groupStatus">
             <option value="normal" ${s.groupStatus==='normal'?'selected':''}>普通</option>
             <option value="strong" ${s.groupStatus==='strong'?'selected':''}>今日最強前3</option>
@@ -303,6 +304,7 @@ function renderStockList(){
         <div><label>昨高</label><input type="number" step="0.01" data-f="prevHigh" value="${s.prevHigh}"></div>
         <div><label>昨低</label><input type="number" step="0.01" data-f="prevLow" value="${s.prevLow}"></div>
       </div>
+      <div class="cdp-preview" id="cdpPreview-${s.id}" style="font-size:12px;color:var(--gold);margin:4px 0 2px;">CDP 尚未計算（需要昨收/昨高/昨低）</div>
       <div class="grid2">
         <div><label>現價 / 最新成交</label><input type="number" step="0.01" data-f="price" value="${s.price}"></div>
         <div><label>今量(張)</label><input type="number" data-f="volToday" value="${s.volToday}"></div>
@@ -351,14 +353,43 @@ function renderStockList(){
       inp.addEventListener('input', ()=>{
         s[inp.dataset.f] = inp.value;
         save();
+        if(['prevClose','prevHigh','prevLow'].includes(inp.dataset.f)){
+          updateCdpPreview(s);
+        }
       });
       inp.addEventListener('change', ()=>{
         s[inp.dataset.f] = inp.value;
         save();
+        if(inp.dataset.f==='code'){
+          autoFillGroupByCode(s);
+        }
       });
     });
     wrap.appendChild(card);
+    updateCdpPreview(s);
   });
+}
+
+function updateCdpPreview(s){
+  const el = document.getElementById('cdpPreview-'+s.id);
+  if(!el) return;
+  const c = computeCDP(s);
+  if(!c){
+    el.textContent = 'CDP 尚未計算（需要昨收/昨高/昨低）';
+  }else{
+    el.textContent = `CDP ${c.cdp.toFixed(2)} ｜ AH ${c.AH.toFixed(2)} NH ${c.NH.toFixed(2)} ｜ NL ${c.NL.toFixed(2)} AL ${c.AL.toFixed(2)}`;
+  }
+}
+
+function autoFillGroupByCode(s){
+  if(!industryMap || !s.code) return;
+  const info = industryMap[s.code.trim()];
+  if(info && info.industry){
+    s.group = info.industry;
+    if(!s.name) s.name = info.name || s.name;
+    save();
+    renderStockList();
+  }
 }
 
 function num(v){ const n = parseFloat(v); return isNaN(n)?null:n; }
@@ -381,6 +412,7 @@ function analyzeStock(s){
   const prevHigh = num(s.prevHigh), prevLow = num(s.prevLow);
   const volT = num(s.volToday), volP = num(s.volPrev);
   const c = computeCDP(s);
+  const gState = groupState(s);
 
   const longConds = [
     {label:'突破昨日高點', ok: price!==null && prevHigh!==null && price>prevHigh},
@@ -388,7 +420,7 @@ function analyzeStock(s){
     {label:'站上 VWAP', ok: s.vwap==='above'},
     {label:'第一或第二根5分K收紅', ok: s.k1==='red' || s.k2==='red'},
     {label:'成交量放大（>昨日同期）', ok: volT!==null && volP!==null && volT>volP},
-    {label:'同族群最強', ok: s.groupStatus==='strong'},
+    {label:`同族群最強${s.group?'（'+s.group+'）':''}`, ok: gState==='strong'},
   ];
   const shortConds = [
     {label:'跌破昨日低點', ok: price!==null && prevLow!==null && price<prevLow},
@@ -396,21 +428,21 @@ function analyzeStock(s){
     {label:'跌破 VWAP', ok: s.vwap==='below'},
     {label:'第一或第二根5分K收黑', ok: s.k1==='black' || s.k2==='black'},
     {label:'成交量放大（>昨日同期）', ok: volT!==null && volP!==null && volT>volP},
-    {label:'同族群最弱', ok: s.groupStatus==='weak'},
+    {label:`同族群最弱${s.group?'（'+s.group+'）':''}`, ok: gState==='weak'},
   ];
 
   const longExclude = [];
   if(state.market==='bear') longExclude.push('大盤偏空，逆勢做多');
   if(s.inst==='sell') longExclude.push('法人賣超');
   if(s.vwap==='below') longExclude.push('跌破VWAP');
-  if(s.groupStatus==='weak') longExclude.push('類股最弱');
+  if(gState==='weak') longExclude.push('類股最弱');
   if(s.openTrend==='high2low') longExclude.push('開高走低');
 
   const shortExclude = [];
   if(state.market==='bull') shortExclude.push('大盤偏多，逆勢放空');
   if(s.inst==='buy') shortExclude.push('法人買超');
   if(s.vwap==='above') shortExclude.push('站穩VWAP');
-  if(s.groupStatus==='strong') shortExclude.push('類股最強');
+  if(gState==='strong') shortExclude.push('類股最強');
   if(s.openTrend==='low2high') shortExclude.push('開低走高');
 
   const longScore = longConds.filter(c=>c.ok).length;
@@ -421,8 +453,8 @@ function analyzeStock(s){
       ? (state.market==='bull'?20:state.market==='neutral'?10:0)
       : (state.market==='bear'?20:state.market==='neutral'?10:0);
     const flowPts = dir==='long'
-      ? (s.groupStatus==='strong'?20:s.groupStatus==='normal'?10:0)
-      : (s.groupStatus==='weak'?20:s.groupStatus==='normal'?10:0);
+      ? (gState==='strong'?20:gState==='normal'?10:0)
+      : (gState==='weak'?20:gState==='normal'?10:0);
     const techPts = ((dir==='long'?longScore:shortScore)/6)*20;
     let volPts = 0;
     if(volT!==null && volP!==null && volP>0){
@@ -464,12 +496,17 @@ function renderResultCard(r, dir){
     ? `進場：突破關鍵價再進場，不搶頂　|　停損：跌破開盤價/VWAP　|　停利：CDP下一壓力位 或 1R~2R`
     : `進場：跌破關鍵價再進場，不搶底　|　停損：站上前高/VWAP　|　停利：CDP下一支撐位 或 1R~2R`;
 
+  const cdpLine = r.c
+    ? `CDP ${r.c.cdp.toFixed(2)} ｜ AH ${r.c.AH.toFixed(2)}　NH ${r.c.NH.toFixed(2)} ｜ NL ${r.c.NL.toFixed(2)}　AL ${r.c.AL.toFixed(2)}`
+    : 'CDP：昨收/昨高/昨低不足，無法計算';
+
   return `
     <div class="result-card ${isLong?'result-long':'result-short'}">
       <div class="result-head">
         <div class="result-name">${isLong?'🐂':'🐻'} ${name} <span style="color:var(--muted);font-size:12px;">${r.s.code||''}</span></div>
         <div class="score-badge ${rec.cls}">${score}/6 ・ ${rec.text}</div>
       </div>
+      <div style="font-size:11.5px;color:var(--gold);margin-top:6px;">${cdpLine}</div>
       <ul class="cond-list">
         ${conds.map(c=>`<li class="${c.ok?'ok':''}">${c.label}</li>`).join('')}
       </ul>
@@ -510,9 +547,89 @@ function runAnalysis(){
 
 let rawStocks = [];
 let dataMeta = null;
+let industryMap = null;
+let groupRanking = null; // { list: [{industry, avgPct, count}], strongSet:Set, weakSet:Set }
 
 function setFetchStatus(msg){
   document.getElementById('fetchStatus').textContent = msg;
+}
+
+async function fetchIndustryMap(){
+  try{
+    const resp = await fetch('data/industry_map.json', {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    industryMap = await resp.json();
+  }catch(e){
+    industryMap = null;
+  }
+}
+
+function computeGroupRanking(){
+  if(!industryMap || !rawStocks.length){
+    groupRanking = null;
+    renderGroupRankInfo();
+    return;
+  }
+  const stats = {}; // industry -> {sum, count}
+  rawStocks.forEach(s=>{
+    const info = industryMap[s.Code];
+    if(!info || !info.industry) return;
+    const pct = pctChangeOf(s);
+    if(pct===null) return;
+    if(!stats[info.industry]) stats[info.industry] = {sum:0, count:0};
+    stats[info.industry].sum += pct;
+    stats[info.industry].count += 1;
+  });
+  const list = Object.keys(stats)
+    .map(k=>({ industry:k, avgPct: stats[k].sum/stats[k].count, count: stats[k].count }))
+    .filter(g=>g.count>=3) // 樣本太少的族群先濾掉，避免單一飆股誤導排名
+    .sort((a,b)=>b.avgPct-a.avgPct);
+
+  if(list.length===0){ groupRanking = null; renderGroupRankInfo(); return; }
+
+  const strong = list.slice(0,3);
+  const weak = list.slice(-3).reverse();
+
+  groupRanking = {
+    list,
+    strongSet: new Set(strong.map(g=>g.industry)),
+    weakSet: new Set(weak.map(g=>g.industry)),
+  };
+
+  // 自動帶入 STEP 2 的前三強/前三弱（使用者仍可手動覆蓋）
+  state.strong = strong.map(g=>g.industry).join(', ');
+  state.weak = weak.map(g=>g.industry).join(', ');
+  save();
+  renderInputs();
+  renderGroupRankInfo();
+}
+
+function renderGroupRankInfo(){
+  const el = document.getElementById('groupRankInfo');
+  if(!groupRanking){
+    el.textContent = industryMap
+      ? '目前資料樣本不足以判斷族群強弱（族群成分股太少），請在下面手動輸入。'
+      : '找不到 data/industry_map.json（族群對照表），資金輪動請手動輸入。可以用 fetch_industry.py 產生這個檔案。';
+    return;
+  }
+  const strong = groupRanking.list.slice(0,3);
+  const weak = groupRanking.list.slice(-3).reverse();
+  const fmt = g=>`${g.industry} ${g.avgPct>=0?'+':''}${g.avgPct.toFixed(2)}%（${g.count}檔）`;
+  el.innerHTML = `<b style="color:var(--long)">強勢：</b>${strong.map(fmt).join('、')}<br><b style="color:var(--short)">弱勢：</b>${weak.map(fmt).join('、')}`;
+}
+
+function groupState(s){
+  const norm = t => (t||'').trim();
+  const list = str => (str||'').split(/[,，]/).map(x=>norm(x)).filter(Boolean);
+  if(s.group){
+    if(groupRanking && groupRanking.strongSet.has(s.group)) return 'strong';
+    if(groupRanking && groupRanking.weakSet.has(s.group)) return 'weak';
+    const strongList = list(state.strong);
+    const weakList = list(state.weak);
+    if(strongList.some(g=>g && s.group.includes(g))) return 'strong';
+    if(weakList.some(g=>g && s.group.includes(g))) return 'weak';
+  }
+  return s.groupStatus || 'normal';
 }
 
 async function fetchLatest(){
@@ -525,7 +642,10 @@ async function fetchLatest(){
     const json = await resp.json();
     rawStocks = json.stocks || [];
     dataMeta = { trade_date: json.trade_date, fetched_at_utc: json.fetched_at_utc, count: json.count };
-    setFetchStatus(`已讀取 ${dataMeta.trade_date||'?'} 收盤資料，共 ${rawStocks.length} 檔（抓取時間 UTC ${dataMeta.fetched_at_utc||'?'}）`);
+    await fetchIndustryMap();
+    computeGroupRanking();
+    const groupNote = industryMap ? '，族群資料已自動判斷' : '，未找到族群對照表（data/industry_map.json）';
+    setFetchStatus(`已讀取 ${dataMeta.trade_date||'?'} 收盤資料，共 ${rawStocks.length} 檔${groupNote}`);
     renderCandidates();
   }catch(e){
     rawStocks = [];
@@ -573,11 +693,13 @@ function renderCandidates(){
   list.innerHTML = matched.map(x=>{
     const inst = instFromNet(x.s.TotalInstNet);
     const instLabel = inst==='buy'?'買超':inst==='sell'?'賣超':'持平';
+    const info = industryMap ? industryMap[x.s.Code] : null;
+    const groupLabel = info ? info.industry : '';
     return `
       <label class="candidate-row">
         <input type="checkbox" class="cand-check" data-code="${x.s.Code}">
         <span class="code">${x.s.Code}</span>
-        <span class="name">${x.s.Name||''}</span>
+        <span class="name">${x.s.Name||''}${groupLabel?` <span style="color:var(--muted)">${groupLabel}</span>`:''}</span>
         <span class="inst-tag ${inst}">${instLabel}</span>
         <span class="pct ${x.pct>=0?'up':'down'}">${x.pct>=0?'+':''}${x.pct.toFixed(2)}%</span>
       </label>
@@ -601,9 +723,10 @@ function addCandidates(){
   checked.forEach(code=>{
     const s = rawStocks.find(r=>r.Code===code);
     if(!s) return;
+    const info = industryMap ? industryMap[code] : null;
     state.stocks.push({
       id: Date.now()+Math.random(),
-      code: s.Code, name: s.Name||'', group:'', groupStatus:'normal',
+      code: s.Code, name: s.Name||'', group: info ? info.industry : '', groupStatus:'normal',
       prevClose: s.ClosingPrice||'', prevHigh: s.HighestPrice||'', prevLow: s.LowestPrice||'',
       price:'', volToday:'',
       volPrev: s.TradeVolume ? Math.round(parseFloat(s.TradeVolume)/1000) : '',
