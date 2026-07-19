@@ -1,0 +1,29 @@
+name: Fetch Industry Map
+
+on:
+  workflow_dispatch: {}       # 可以在 GitHub App 手動按「Run workflow」
+  schedule:
+    - cron: "0 20 * * 1"      # 每週一 UTC 20:00（台北時間週二 04:00）自動跑一次
+
+jobs:
+  fetch-industry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run fetch_industry.py
+        run: python fetch_industry.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/industry_map.json
+          git diff --quiet --cached || git commit -m "更新產業別對照表"
+          git push
