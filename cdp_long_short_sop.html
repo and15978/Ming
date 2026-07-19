@@ -110,6 +110,20 @@
   .footer-note{ text-align:center; color:var(--muted); font-size:11px; margin-top:20px; padding:0 20px; }
 
   .empty{ text-align:center; color:var(--muted); font-size:13px; padding:20px 0; }
+
+  .autofetch-box{ background:var(--card2); border:1px solid var(--border); border-radius:12px; padding:12px; }
+  .autofetch-box .hint{ font-size:12.5px; color:var(--muted); margin-bottom:8px; line-height:1.6; }
+  .candidate-row{ display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
+  .candidate-row input[type=checkbox]{ width:17px; height:17px; flex:none; }
+  .candidate-row .code{ width:48px; color:var(--muted); flex:none; }
+  .candidate-row .name{ flex:1; }
+  .candidate-row .pct{ width:58px; text-align:right; flex:none; }
+  .candidate-row .pct.up{ color:var(--long); }
+  .candidate-row .pct.down{ color:var(--short); }
+  .candidate-row .inst-tag{ width:34px; text-align:center; flex:none; font-size:11px; border-radius:6px; padding:2px 0; }
+  .candidate-row .inst-tag.buy{ background:var(--long-dim); color:var(--long); }
+  .candidate-row .inst-tag.sell{ background:var(--short-dim); color:var(--short); }
+  .candidate-row .inst-tag.flat{ background:#232c3d; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -142,7 +156,20 @@
 <!-- STEP 3 -->
 <div class="section">
   <div class="step-label">STEP 3 ・ 個股資料</div>
-  <div id="stockList"></div>
+
+  <div class="autofetch-box">
+    <div class="hint">讀取本站 data/latest.json，把最新一個交易日的收盤價當成「昨收/昨高/昨低」自動算 CDP，法人買賣超也會一起帶入。現價、今量、VWAP、5分K 這些屬於明天盤中的資訊，讀取後仍要手動補。</div>
+    <div class="grid2">
+      <div><label>漲跌幅門檻 (%)</label><input type="number" step="0.1" id="pctThresh" value="9.5"></div>
+      <div><label>成交量門檻 (張)</label><input type="number" id="volThresh" value="5000"></div>
+    </div>
+    <button class="btn btn-primary" onclick="fetchLatest()">讀取每日自動更新資料</button>
+    <div id="fetchStatus" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+    <div id="candidateList"></div>
+    <button class="btn btn-ghost" id="addCandidatesBtn" style="display:none;" onclick="addCandidates()">加入勾選個股</button>
+  </div>
+
+  <div id="stockList" style="margin-top:14px;"></div>
   <button class="btn btn-ghost" onclick="addStock()">＋ 新增個股</button>
 </div>
 
@@ -480,6 +507,116 @@ function runAnalysis(){
   wrap.innerHTML = html;
   wrap.scrollIntoView({behavior:'smooth', block:'start'});
 }
+
+let rawStocks = [];
+let dataMeta = null;
+
+function setFetchStatus(msg){
+  document.getElementById('fetchStatus').textContent = msg;
+}
+
+async function fetchLatest(){
+  setFetchStatus('讀取中…');
+  document.getElementById('addCandidatesBtn').style.display = 'none';
+  document.getElementById('candidateList').innerHTML = '';
+  try{
+    const resp = await fetch('data/latest.json', {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const json = await resp.json();
+    rawStocks = json.stocks || [];
+    dataMeta = { trade_date: json.trade_date, fetched_at_utc: json.fetched_at_utc, count: json.count };
+    setFetchStatus(`已讀取 ${dataMeta.trade_date||'?'} 收盤資料，共 ${rawStocks.length} 檔（抓取時間 UTC ${dataMeta.fetched_at_utc||'?'}）`);
+    renderCandidates();
+  }catch(e){
+    rawStocks = [];
+    setFetchStatus('讀取失敗：'+e.message+'。請確認這支 HTML 已經放進你的 GitHub Pages repo（跟 data/latest.json 同一個網站），單獨開啟本機檔案（file://）沒辦法讀取。');
+  }
+}
+
+function pctChangeOf(s){
+  const close = parseFloat(s.ClosingPrice);
+  const chg = parseFloat(s.Change);
+  if(isNaN(close) || isNaN(chg)) return null;
+  const prevClose = close - chg;
+  if(!prevClose) return null;
+  return (chg/prevClose)*100;
+}
+
+function instFromNet(net){
+  const n = parseFloat(net);
+  if(isNaN(n) || n===0) return 'flat';
+  return n>0 ? 'buy' : 'sell';
+}
+
+function renderCandidates(){
+  const pctThresh = parseFloat(document.getElementById('pctThresh').value)||0;
+  const volThresh = parseFloat(document.getElementById('volThresh').value)||0;
+  const list = document.getElementById('candidateList');
+  const addBtn = document.getElementById('addCandidatesBtn');
+
+  if(!rawStocks.length){
+    list.innerHTML = '';
+    addBtn.style.display = 'none';
+    return;
+  }
+
+  const matched = rawStocks.map(s=>({s, pct: pctChangeOf(s), vol: (parseFloat(s.TradeVolume)||0)/1000}))
+    .filter(x=> x.pct!==null && Math.abs(x.pct)>=pctThresh && x.vol>=volThresh)
+    .sort((a,b)=> Math.abs(b.pct)-Math.abs(a.pct));
+
+  if(matched.length===0){
+    list.innerHTML = `<div class="empty">沒有股票符合門檻，試試調低漲跌幅或成交量門檻</div>`;
+    addBtn.style.display = 'none';
+    return;
+  }
+
+  list.innerHTML = matched.map(x=>{
+    const inst = instFromNet(x.s.TotalInstNet);
+    const instLabel = inst==='buy'?'買超':inst==='sell'?'賣超':'持平';
+    return `
+      <label class="candidate-row">
+        <input type="checkbox" class="cand-check" data-code="${x.s.Code}">
+        <span class="code">${x.s.Code}</span>
+        <span class="name">${x.s.Name||''}</span>
+        <span class="inst-tag ${inst}">${instLabel}</span>
+        <span class="pct ${x.pct>=0?'up':'down'}">${x.pct>=0?'+':''}${x.pct.toFixed(2)}%</span>
+      </label>
+    `;
+  }).join('');
+  addBtn.style.display = 'block';
+  addBtn.textContent = `加入勾選個股（共 ${matched.length} 檔符合）`;
+}
+
+function addCandidates(){
+  const checked = Array.from(document.querySelectorAll('.cand-check:checked')).map(el=>el.dataset.code);
+  if(checked.length===0){ return; }
+
+  // 如果目前清單只有一筆全空白的預設卡片，先移除它
+  if(state.stocks.length===1){
+    const only = state.stocks[0];
+    const isEmpty = !only.code && !only.name && !only.prevClose;
+    if(isEmpty) state.stocks = [];
+  }
+
+  checked.forEach(code=>{
+    const s = rawStocks.find(r=>r.Code===code);
+    if(!s) return;
+    state.stocks.push({
+      id: Date.now()+Math.random(),
+      code: s.Code, name: s.Name||'', group:'', groupStatus:'normal',
+      prevClose: s.ClosingPrice||'', prevHigh: s.HighestPrice||'', prevLow: s.LowestPrice||'',
+      price:'', volToday:'',
+      volPrev: s.TradeVolume ? Math.round(parseFloat(s.TradeVolume)/1000) : '',
+      inst: instFromNet(s.TotalInstNet), vwap:'unknown', k1:'unknown', k2:'unknown', openTrend:'normal'
+    });
+  });
+  save();
+  renderStockList();
+  document.getElementById('stockList').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+document.getElementById('pctThresh').addEventListener('input', ()=>{ if(rawStocks.length) renderCandidates(); });
+document.getElementById('volThresh').addEventListener('input', ()=>{ if(rawStocks.length) renderCandidates(); });
 
 load();
 renderMarketToggle();
