@@ -40,6 +40,63 @@ SSL_CONTEXT.check_hostname = False
 SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 
 
+# ── 加權指數歷史（給 STEP1 大盤方向自動判斷用）──────────────────────────────
+FMTQIK_URL = "https://www.twse.com.tw/exchangeReport/FMTQIK?response=json&date={date}"
+
+
+def fetch_taiex_history(target_date_str):
+    """
+    抓大盤加權指數的每日收盤與成交值歷史。
+    target_date_str: 西元年 YYYYMMDD
+
+    TWSE FMTQIK 這支 API 一次會回傳「該年度至今」全部交易日，
+    欄位依序是：日期(民國年/MM/DD)、成交股數、成交金額、成交筆數、
+    發行量加權股價指數、漲跌點數。
+    """
+    def fetch_year(date_str):
+        url = FMTQIK_URL.format(date=date_str)
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:
+            raw = resp.read()
+        data = json.loads(raw.decode("utf-8"))
+        rows = data.get("data") or []
+        out = []
+        for r in rows:
+            try:
+                y, m, d = r[0].strip().split("/")
+                iso_date = f"{int(y)+1911:04d}-{int(m):02d}-{int(d):02d}"
+                trade_value = float(str(r[2]).replace(",", ""))
+                close = float(str(r[4]).replace(",", ""))
+                chg_raw = str(r[5]).replace(",", "").replace("+", "").strip()
+                chg = float(chg_raw) if chg_raw not in ("", "X", "--") else 0.0
+                out.append({"date": iso_date, "close": close, "tradeValue": trade_value, "changePts": chg})
+            except (ValueError, IndexError, ZeroDivisionError):
+                continue
+        return out
+
+    records = fetch_year(target_date_str)
+    if len(records) < 15:
+        # 年初交易日不夠算10日均線，補抓去年最後幾筆
+        prev_year_date = f"{int(target_date_str[:4]) - 1}1231"
+        records = fetch_year(prev_year_date) + records
+    return records[-30:]  # 只保留最近30筆，夠算5MA/10MA就好
+
+
+def save_market_history(date_iso, data_dir="data"):
+    """把大盤指數歷史存成 data/market.json，失敗不影響個股資料抓取。"""
+    try:
+        history = fetch_taiex_history(date_iso.replace("-", ""))
+        if not history:
+            print("[大盤指數] 沒抓到任何資料，略過")
+            return
+        out_path = os.path.join(data_dir, "market.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump({"updated_trade_date": date_iso, "history": history}, f, ensure_ascii=False)
+        print(f"[大盤指數] 已寫入 {out_path}，共 {len(history)} 筆")
+    except Exception as e:
+        print(f"[大盤指數] 抓取失敗（{e}），略過（不影響個股資料）")
+
+
 def http_get_json(url):
     req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:
@@ -357,6 +414,7 @@ def main():
         stocks, date_iso = fetch_by_date_via_mi_index(date_arg)
         merge_extra_data(stocks, date_iso)
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
+        save_market_history(date_iso)
         return
 
     # 排程執行（不帶參數）：
@@ -379,6 +437,7 @@ def main():
 
     merge_extra_data(stocks, date_iso)
     save(stocks, date_iso, source, update_latest=True)
+    save_market_history(date_iso)
 
 
 if __name__ == "__main__":
