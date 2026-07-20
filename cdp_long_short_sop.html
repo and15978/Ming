@@ -165,9 +165,9 @@
   <input type="date" id="tradeDate">
 
   <div class="autofetch-box" style="margin-top:10px;">
-    <div class="hint">讀取 data/market.json，用加權指數 5MA/10MA/量能自動判斷 3 項；VWAP、台指期同步這 2 項要盤中/期貨資料，手動選。5 項裡符合幾項偏多，直接照下面規則分類。</div>
+    <div class="hint">讀取 data/market.json，用加權指數 5MA/10MA/量能自動判斷；VWAP 有近似值資料時也會自動算（(高+低+收)/3，非官方VWAP），沒有才用下面手動選單；台指期同步走強沒有資料來源，仍要手動選。5 項裡符合幾項偏多，直接照下面規則分類。</div>
     <div class="grid2">
-      <div><label>大盤站上/跌破 VWAP</label>
+      <div><label>大盤站上/跌破 VWAP（沒近似值資料時才會用這裡）</label>
         <select id="marketVwap">
           <option value="above">站上</option>
           <option value="neutral" selected>持平/不確定</option>
@@ -890,7 +890,19 @@ async function fetchMarketAuto(){
       : { label:'站上10MA', ok:false, detail:'歷史資料不足10天，暫算未符合', na:true };
     const volOk = (prevVol!==null && today.tradeValue>prevVol) || (vol5avg!==null && today.tradeValue>vol5avg);
     const cond3 = { label:'成交量放大', ok: volOk, detail:`今日 ${(today.tradeValue/1e8).toFixed(1)}億 ｜ 昨日 ${prevVol?(prevVol/1e8).toFixed(1)+'億':'?'} ｜ 5日均 ${vol5avg?(vol5avg/1e8).toFixed(1)+'億':'?'}` };
-    const cond4 = { label:'站上VWAP', ok: state.marketVwap==='above', detail: state.marketVwap==='above'?'手動選：站上':state.marketVwap==='below'?'手動選：跌破':'手動選：持平/不確定' };
+
+    let cond4;
+    const hl = json.today_hl;
+    if(hl && json.updated_trade_date===today.date){
+      const approxVwap = (hl.high + hl.low + hl.close) / 3;
+      cond4 = {
+        label:'站上VWAP（近似值）',
+        ok: today.close > approxVwap,
+        detail:`收盤 ${today.close.toFixed(2)} ｜ 近似均價 ${approxVwap.toFixed(2)}（(高+低+收)/3，非官方VWAP）`
+      };
+    }else{
+      cond4 = { label:'站上VWAP', ok: state.marketVwap==='above', detail: (state.marketVwap==='above'?'手動選：站上':state.marketVwap==='below'?'手動選：跌破':'手動選：持平/不確定') + '（這天沒有近似值資料，用手動選單）' };
+    }
     const cond5 = { label:'台指期同步走強', ok: state.marketFutures==='strong', detail: state.marketFutures==='strong'?'手動選：走強':state.marketFutures==='weak'?'手動選：走弱':'手動選：持平/不確定' };
 
     const conds = [cond1, cond2, cond3, cond4, cond5];
