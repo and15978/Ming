@@ -82,6 +82,39 @@ def fetch_taiex_history(target_date_str):
     return records[-30:]  # 只保留最近30筆，夠算5MA/10MA就好
 
 
+MI_5MINS_HIST_URL = "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?response=json&date={date}"
+
+
+def fetch_taiex_today_hl(date_str):
+    """
+    抓當天加權指數的開高低收（MI_5MINS_HIST，資料是逐月的，
+    傳入某天日期會連當月其他天一起回來，這裡只挑出目標那天）。
+    用 (最高+最低+收盤)/3 當大盤「近似均價」，接近但不等於官方VWAP
+    （證交所沒有公布指數本身的成交量加權平均價，指數不是一個可成交商品）。
+    """
+    url = MI_5MINS_HIST_URL.format(date=date_str)
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:
+        raw = resp.read()
+    data = json.loads(raw.decode("utf-8"))
+    rows = data.get("data") or []
+    want_iso = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    for r in rows:
+        try:
+            y, m, d = r[0].strip().split("/")
+            iso = f"{int(y)+1911:04d}-{int(m):02d}-{int(d):02d}"
+            if iso == want_iso:
+                return {
+                    "open": float(str(r[1]).replace(",", "")),
+                    "high": float(str(r[2]).replace(",", "")),
+                    "low": float(str(r[3]).replace(",", "")),
+                    "close": float(str(r[4]).replace(",", "")),
+                }
+        except (ValueError, IndexError):
+            continue
+    return None
+
+
 def save_market_history(date_iso, data_dir="data"):
     """把大盤指數歷史存成 data/market.json，失敗不影響個股資料抓取。"""
     try:
@@ -89,9 +122,22 @@ def save_market_history(date_iso, data_dir="data"):
         if not history:
             print("[大盤指數] 沒抓到任何資料，略過")
             return
+
+        out_data = {"updated_trade_date": date_iso, "history": history}
+
+        try:
+            today_hl = fetch_taiex_today_hl(date_iso.replace("-", ""))
+            if today_hl:
+                out_data["today_hl"] = today_hl
+                print(f"[大盤VWAP近似] 已取得 {date_iso} 開高低收，可自動估算VWAP")
+            else:
+                print(f"[大盤VWAP近似] 沒找到 {date_iso} 這天的高低點資料，VWAP條件維持手動")
+        except Exception as e:
+            print(f"[大盤VWAP近似] 抓取失敗（{e}），VWAP條件維持手動")
+
         out_path = os.path.join(data_dir, "market.json")
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump({"updated_trade_date": date_iso, "history": history}, f, ensure_ascii=False)
+            json.dump(out_data, f, ensure_ascii=False)
         print(f"[大盤指數] 已寫入 {out_path}，共 {len(history)} 筆")
     except Exception as e:
         print(f"[大盤指數] 抓取失敗（{e}），略過（不影響個股資料）")
