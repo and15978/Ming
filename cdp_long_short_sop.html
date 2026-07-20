@@ -786,7 +786,13 @@ function renderGroupRankInfo(){
     bonusHtml = `<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">大盤加分尚未計算，可以先去 STEP 1 按「讀取大盤指數，自動判斷方向」</div>`;
   }
 
-  const rows = groupRanking.list.map(g=>{
+  const top3 = groupRanking.list.slice(0,3);
+  const bottom3 = groupRanking.list.slice(-3).reverse();
+  const top3Names = new Set(top3.map(g=>g.industry));
+  const bottom3Names = new Set(bottom3.map(g=>g.industry));
+  const middle = groupRanking.list.filter(g=> !top3Names.has(g.industry) && !bottom3Names.has(g.industry));
+
+  function rowHtml(g){
     const tier = tierInfo(g.score);
     const hitLabels = g.conds.filter(c=>c.ok).map(c=>c.label).join('、') || '無符合項目';
     const detailHtml = state.groupDetailVisible
@@ -802,12 +808,31 @@ function renderGroupRankInfo(){
         ${detailHtml}
       </div>
     `;
-  }).join('');
+  }
+
+  const topRows = top3.map(rowHtml).join('');
+  const bottomRows = bottom3.map(rowHtml).join('');
+  const middleRows = middle.map(rowHtml).join('');
 
   const toggleBtn = document.getElementById('toggleGroupDetailBtn');
   if(toggleBtn) toggleBtn.textContent = state.groupDetailVisible ? '隱藏細節' : '顯示細節';
 
-  el.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">資料日期：${dateLabel} ・ 共 ${groupRanking.list.length} 個族群</div>${bonusHtml}${rows}`;
+  const middleBlock = middle.length
+    ? `<details style="margin-top:8px;">
+         <summary style="color:var(--gold);font-size:12.5px;cursor:pointer;padding:6px 0;">中段族群（${middle.length}個，點開看全部 ▾）</summary>
+         ${middleRows}
+       </details>`
+    : '';
+
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">資料日期：${dateLabel} ・ 共 ${groupRanking.list.length} 個族群</div>
+    ${bonusHtml}
+    <div style="font-size:12px;color:var(--long);font-weight:700;margin:4px 0 2px;">🔥 前三強</div>
+    ${topRows}
+    <div style="font-size:12px;color:var(--short);font-weight:700;margin:10px 0 2px;">❄️ 前三弱</div>
+    ${bottomRows}
+    ${middleBlock}
+  `;
 }
 
 function groupState(s){
