@@ -164,7 +164,8 @@
       <div><label>漲跌幅門檻 (%)</label><input type="number" step="0.1" id="pctThresh" value="9.5"></div>
       <div><label>成交量門檻 (張)</label><input type="number" id="volThresh" value="5000"></div>
     </div>
-    <button class="btn btn-primary" onclick="fetchLatest()">讀取每日自動更新資料</button>
+    <button class="btn btn-primary" onclick="fetchLatest()">讀取資料（依 STEP 1 選的日期）</button>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
     <div id="fetchStatus" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
     <div id="candidateList"></div>
     <button class="btn btn-ghost" id="addCandidatesBtn" style="display:none;" onclick="addCandidates()">加入勾選個股</button>
@@ -532,14 +533,20 @@ function runAnalysis(){
     return;
   }
 
-  let html = '';
-  html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（依估算總分排序）</div>`;
-  html += longList.map(r=>renderResultCard(r,'long')).join('');
-  html += `</div>`;
+  const longBlock = `<div class="step-label" style="color:var(--long)">🐂 做多候選（依估算總分排序）</div>` + longList.map(r=>renderResultCard(r,'long')).join('');
+  const shortBlock = `<div class="step-label" style="color:var(--short)">🐻 放空候選（依估算總分排序）</div>` + shortList.map(r=>renderResultCard(r,'short')).join('');
 
-  html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（依估算總分排序）</div>`;
-  html += shortList.map(r=>renderResultCard(r,'short')).join('');
-  html += `</div>`;
+  let html = '';
+  if(state.market==='bull'){
+    html += `<div class="section">${longBlock}</div>`;
+    html += `<div class="section"><details><summary style="color:var(--muted);font-size:13px;cursor:pointer;">🐻 放空候選（大盤偏多，逆勢，僅供參考 ▾）</summary>${shortBlock}</details></div>`;
+  }else if(state.market==='bear'){
+    html += `<div class="section"><details><summary style="color:var(--muted);font-size:13px;cursor:pointer;">🐂 做多候選（大盤偏空，逆勢，僅供參考 ▾）</summary>${longBlock}</details></div>`;
+    html += `<div class="section">${shortBlock}</div>`;
+  }else{
+    html += `<div class="section">${longBlock}</div>`;
+    html += `<div class="section">${shortBlock}</div>`;
+  }
 
   wrap.innerHTML = html;
   wrap.scrollIntoView({behavior:'smooth', block:'start'});
@@ -636,20 +643,43 @@ async function fetchLatest(){
   setFetchStatus('讀取中…');
   document.getElementById('addCandidatesBtn').style.display = 'none';
   document.getElementById('candidateList').innerHTML = '';
-  try{
-    const resp = await fetch('data/latest.json', {cache:'no-store'});
+
+  const wantedDate = (state.date||'').trim(); // STEP1 選的日期，格式 YYYY-MM-DD
+  const primaryFile = wantedDate ? `data/${wantedDate}.json` : 'data/latest.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
     if(!resp.ok) throw new Error('HTTP '+resp.status);
-    const json = await resp.json();
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/latest.json'){
+        // 指定日期的檔案抓不到（可能非交易日、還沒抓、或超出保存範圍），退回最新一筆
+        json = await tryFetch('data/latest.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
     rawStocks = json.stocks || [];
     dataMeta = { trade_date: json.trade_date, fetched_at_utc: json.fetched_at_utc, count: json.count };
     await fetchIndustryMap();
     computeGroupRanking();
     const groupNote = industryMap ? '，族群資料已自動判斷' : '，未找到族群對照表（data/industry_map.json）';
-    setFetchStatus(`已讀取 ${dataMeta.trade_date||'?'} 收盤資料，共 ${rawStocks.length} 檔${groupNote}`);
+    const fallbackNote = usedFallback
+      ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）`
+      : '';
+    setFetchStatus(`已讀取 ${dataMeta.trade_date||'?'} 收盤資料，共 ${rawStocks.length} 檔${groupNote}${fallbackNote}`);
     renderCandidates();
   }catch(e){
     rawStocks = [];
-    setFetchStatus('讀取失敗：'+e.message+'。請確認這支 HTML 已經放進你的 GitHub Pages repo（跟 data/latest.json 同一個網站），單獨開啟本機檔案（file://）沒辦法讀取。');
+    setFetchStatus('讀取失敗：'+e.message+'。請確認這支 HTML 已經放進你的 GitHub Pages repo（跟 data/ 同一個網站），單獨開啟本機檔案（file://）沒辦法讀取。');
   }
 }
 
