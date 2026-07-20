@@ -357,10 +357,28 @@ def main():
         stocks, date_iso = fetch_by_date_via_mi_index(date_arg)
         merge_extra_data(stocks, date_iso)
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
-    else:
+        return
+
+    # 排程執行（不帶參數）：
+    # 先用 MI_INDEX 明確指定「台北時間今天」這個日期去抓，這樣才不會被
+    # openapi 的 STOCK_DAY_ALL（公布時間常常延遲、有時候會停在前一天）誤導，
+    # 造成程式顯示執行成功、但其實抓到的是舊資料。
+    # 只有在 MI_INDEX 失敗時（例如非交易日、TWSE 尚未公布）才退回 openapi。
+    taipei_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    today_str = taipei_now.strftime("%Y%m%d")
+
+    try:
+        stocks, date_iso = fetch_by_date_via_mi_index(today_str)
+        source = MI_INDEX_URL.format(date=today_str)
+        print(f"[主要來源] MI_INDEX {today_str} 抓取成功，交易日 {date_iso}")
+    except Exception as e:
+        print(f"[主要來源] MI_INDEX {today_str} 抓取失敗（{e}），改用備援來源 openapi")
         stocks, date_iso = fetch_latest_via_openapi()
-        merge_extra_data(stocks, date_iso)
-        save(stocks, date_iso, OPENAPI_URL, update_latest=True)
+        source = OPENAPI_URL
+        print(f"[備援來源] openapi 抓取成功，交易日 {date_iso}")
+
+    merge_extra_data(stocks, date_iso)
+    save(stocks, date_iso, source, update_latest=True)
 
 
 if __name__ == "__main__":
