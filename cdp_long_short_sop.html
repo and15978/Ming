@@ -204,6 +204,7 @@
   <button class="btn btn-primary" onclick="fetchGroupData()" style="margin-top:10px;">讀取資料，計算資金輪動</button>
   <div id="groupFetchStatus" style="font-size:12px;color:var(--muted);margin-top:8px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
 
+  <button class="btn btn-ghost" id="toggleGroupDetailBtn" onclick="toggleGroupDetail()" style="margin-top:10px;">顯示細節</button>
   <div id="groupRankInfo" style="font-size:12.5px; color:var(--muted); line-height:1.8; max-height:420px; overflow-y:auto; margin-top:10px;">尚未讀取資料，或找不到 data/industry_map.json（族群對照表）。按上面的按鈕讀取，或直接在下面手動輸入。</div>
   <label>前三強族群（逗號分隔，會依此判斷做多的「同族群最強」）</label>
   <input type="text" id="strongGroups" placeholder="族群1, 族群2, 族群3">
@@ -289,6 +290,9 @@ function load(){
   }
   if(!state.groupDate){
     state.groupDate = state.date;
+  }
+  if(typeof state.groupDetailVisible !== 'boolean'){
+    state.groupDetailVisible = false;
   }
   if(!state.stocks || state.stocks.length===0){
     state.stocks = [ blankStock() ];
@@ -750,6 +754,12 @@ function computeGroupRanking(){
   renderGroupRankInfo();
 }
 
+function toggleGroupDetail(){
+  state.groupDetailVisible = !state.groupDetailVisible;
+  save();
+  renderGroupRankInfo();
+}
+
 function renderGroupRankInfo(){
   const el = document.getElementById('groupRankInfo');
   if(!groupRanking){
@@ -779,6 +789,9 @@ function renderGroupRankInfo(){
   const rows = groupRanking.list.map(g=>{
     const tier = tierInfo(g.score);
     const hitLabels = g.conds.filter(c=>c.ok).map(c=>c.label).join('、') || '無符合項目';
+    const detailHtml = state.groupDetailVisible
+      ? `<div class="group-detail">平均${g.avgPct>=0?'+':''}${g.avgPct.toFixed(2)}% ｜ ${g.count}檔 ｜ ${hitLabels}</div>`
+      : '';
     return `
       <div class="group-row">
         <div class="group-row-top">
@@ -786,10 +799,13 @@ function renderGroupRankInfo(){
           <span class="group-score ${tier.cls}">${tier.emoji} ${g.score}/100</span>
         </div>
         <div class="group-bar"><div class="group-bar-fill ${tier.cls}" style="width:${g.score}%"></div></div>
-        <div class="group-detail">平均${g.avgPct>=0?'+':''}${g.avgPct.toFixed(2)}% ｜ ${g.count}檔 ｜ ${hitLabels}</div>
+        ${detailHtml}
       </div>
     `;
   }).join('');
+
+  const toggleBtn = document.getElementById('toggleGroupDetailBtn');
+  if(toggleBtn) toggleBtn.textContent = state.groupDetailVisible ? '隱藏細節' : '顯示細節';
 
   el.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">資料日期：${dateLabel} ・ 共 ${groupRanking.list.length} 個族群</div>${bonusHtml}${rows}`;
 }
@@ -1013,6 +1029,7 @@ load();
 renderMarketToggle();
 renderInputs();
 renderStockList();
+document.getElementById('toggleGroupDetailBtn').textContent = state.groupDetailVisible ? '隱藏細節' : '顯示細節';
 </script>
 </body>
 </html>
