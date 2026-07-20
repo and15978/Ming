@@ -133,6 +133,22 @@
   .market-final.bull{ background:var(--long-dim); color:var(--long); }
   .market-final.bear{ background:var(--short-dim); color:var(--short); }
   .market-final.neutral{ background:#2a2f3a; color:#cfd6e4; }
+
+  .group-row{ padding:9px 0; border-bottom:1px solid var(--border); }
+  .group-row-top{ display:flex; justify-content:space-between; align-items:center; font-size:13.5px; }
+  .group-name{ font-weight:700; }
+  .group-score{ font-size:12.5px; font-weight:700; flex:none; }
+  .group-score.tier-hot{ color:#ff8a3d; }
+  .group-score.tier-warm{ color:var(--long); }
+  .group-score.tier-warn{ color:var(--gold); }
+  .group-score.tier-cold{ color:var(--short); }
+  .group-bar{ height:5px; border-radius:4px; background:#232c3d; margin-top:5px; overflow:hidden; }
+  .group-bar-fill{ height:100%; }
+  .group-bar-fill.tier-hot{ background:#ff8a3d; }
+  .group-bar-fill.tier-warm{ background:var(--long); }
+  .group-bar-fill.tier-warn{ background:var(--gold); }
+  .group-bar-fill.tier-cold{ background:var(--short); }
+  .group-detail{ font-size:11.5px; color:var(--muted); margin-top:4px; }
 </style>
 </head>
 <body>
@@ -181,8 +197,14 @@
 
 <!-- STEP 2 -->
 <div class="section">
-  <div class="step-label">STEP 2 ・ 資金輪動（讀取資料後自動判斷，也可手動覆蓋）</div>
-  <div id="groupRankInfo" style="font-size:12.5px; color:var(--muted); line-height:1.8;">尚未讀取資料，或找不到 data/industry_map.json（族群對照表）。可以先在 STEP 3 按「讀取每日自動更新資料」，或直接在下面手動輸入。</div>
+  <div class="step-label">STEP 2 ・ 資金輪動雷達（獨立分析，5項條件、滿分100分）</div>
+
+  <label>資金輪動要看哪一天的資料</label>
+  <input type="date" id="groupDate">
+  <button class="btn btn-primary" onclick="fetchGroupData()" style="margin-top:10px;">讀取資料，計算資金輪動</button>
+  <div id="groupFetchStatus" style="font-size:12px;color:var(--muted);margin-top:8px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
+
+  <div id="groupRankInfo" style="font-size:12.5px; color:var(--muted); line-height:1.8; max-height:420px; overflow-y:auto; margin-top:10px;">尚未讀取資料，或找不到 data/industry_map.json（族群對照表）。按上面的按鈕讀取，或直接在下面手動輸入。</div>
   <label>前三強族群（逗號分隔，會依此判斷做多的「同族群最強」）</label>
   <input type="text" id="strongGroups" placeholder="族群1, 族群2, 族群3">
   <label>前三弱族群（逗號分隔，會依此判斷放空的「同族群最弱」）</label>
@@ -265,6 +287,9 @@ function load(){
     const d = new Date();
     state.date = d.toISOString().slice(0,10);
   }
+  if(!state.groupDate){
+    state.groupDate = state.date;
+  }
   if(!state.stocks || state.stocks.length===0){
     state.stocks = [ blankStock() ];
   }
@@ -294,11 +319,13 @@ function renderMarketToggle(){
 
 function renderInputs(){
   document.getElementById('tradeDate').value = state.date;
+  document.getElementById('groupDate').value = state.groupDate;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
   document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
   document.getElementById('marketFutures').value = state.marketFutures || 'neutral';
   document.getElementById('tradeDate').oninput = e=>{ state.date=e.target.value; save(); };
+  document.getElementById('groupDate').oninput = e=>{ state.groupDate=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
@@ -595,6 +622,8 @@ let rawStocks = [];
 let dataMeta = null;
 let industryMap = null;
 let groupRanking = null; // { list: [{industry, avgPct, count}], strongSet:Set, weakSet:Set }
+let groupRawStocks = [];  // STEP2 資金輪動自己抓的個股資料，跟 STEP3 的 rawStocks 分開
+let groupDataMeta = null;
 
 function setFetchStatus(msg){
   document.getElementById('fetchStatus').textContent = msg;
@@ -610,28 +639,99 @@ async function fetchIndustryMap(){
   }
 }
 
+let lastMarketConds = null;   // STEP1自動判斷後存的 {ma, vwap, futures}
+let marketForeignBonus = null; // 全市場外資今日是否買超
+
+function tierInfo(score){
+  if(score>=80) return {emoji:'🔥', label:'主流強勢，積極做多重點操作', cls:'tier-hot'};
+  if(score>=60) return {emoji:'👍', label:'中等強勢，挑股操作，觀察突破再進場', cls:'tier-warm'};
+  if(score>=40) return {emoji:'⚠️', label:'輪動不明，降低部位快進快出', cls:'tier-warn'};
+  return {emoji:'❌', label:'資金退潮，不操作或找放空機會', cls:'tier-cold'};
+}
+
+async function fetchGroupData(){
+  const statusEl = document.getElementById('groupFetchStatus');
+  statusEl.textContent = '讀取中…';
+
+  const wantedDate = (state.groupDate||'').trim();
+  const primaryFile = wantedDate ? `data/${wantedDate}.json` : 'data/latest.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/latest.json'){
+        json = await tryFetch('data/latest.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
+    groupRawStocks = json.stocks || [];
+    groupDataMeta = { trade_date: json.trade_date, fetched_at_utc: json.fetched_at_utc, count: json.count };
+    marketForeignBonus = groupRawStocks.reduce((sum,s)=> sum + (parseFloat(s.ForeignNet)||0), 0) > 0;
+    await fetchIndustryMap();
+    computeGroupRanking();
+    const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
+    statusEl.textContent = `已讀取 ${groupDataMeta.trade_date||'?'} 收盤資料，共 ${groupRawStocks.length} 檔${fallbackNote}`;
+  }catch(e){
+    groupRawStocks = [];
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認這支 HTML 已經放進你的 GitHub Pages repo（跟 data/ 同一個網站）。';
+  }
+}
+
 function computeGroupRanking(){
-  if(!industryMap || !rawStocks.length){
+  if(!industryMap || !groupRawStocks.length){
     groupRanking = null;
     renderGroupRankInfo();
     return;
   }
-  const stats = {}; // industry -> {sum, count}
-  rawStocks.forEach(s=>{
+  const groups = {}; // industry -> [{code,name,pct,vol,instNet}]
+  groupRawStocks.forEach(s=>{
     const info = industryMap[s.Code];
     if(!info || !info.industry) return;
     const pct = pctChangeOf(s);
     if(pct===null) return;
-    if(!stats[info.industry]) stats[info.industry] = {sum:0, count:0};
-    stats[info.industry].sum += pct;
-    stats[info.industry].count += 1;
+    const vol = (parseFloat(s.TradeVolume)||0)/1000; // 張
+    const instNet = parseFloat(s.TotalInstNet)||0;
+    if(!groups[info.industry]) groups[info.industry] = [];
+    groups[info.industry].push({code:s.Code, name:s.Name, pct, vol, instNet});
   });
-  const list = Object.keys(stats)
-    .map(k=>({ industry:k, avgPct: stats[k].sum/stats[k].count, count: stats[k].count }))
-    .filter(g=>g.count>=3) // 樣本太少的族群先濾掉，避免單一飆股誤導排名
-    .sort((a,b)=>b.avgPct-a.avgPct);
 
-  if(list.length===0){ groupRanking = null; renderGroupRankInfo(); return; }
+  const industries = Object.keys(groups).filter(k=>groups[k].length>=3); // 樣本太少的先濾掉
+  if(industries.length===0){ groupRanking=null; renderGroupRankInfo(); return; }
+
+  // 各族群今日總成交量排名，前5名可拿「成交量排名前5」那20分
+  const volTotals = industries.map(k=>({industry:k, vol: groups[k].reduce((s,x)=>s+x.vol,0)}));
+  volTotals.sort((a,b)=>b.vol-a.vol);
+  const top5VolSet = new Set(volTotals.slice(0,5).map(x=>x.industry));
+
+  const list = industries.map(industry=>{
+    const stocks = groups[industry];
+    const avgPct = stocks.reduce((s,x)=>s+x.pct,0)/stocks.length;
+    const upCount = stocks.filter(x=>x.pct>0).length;
+    const limitUpCount = stocks.filter(x=>x.pct>=9.5).length;
+    const leader = stocks.slice().sort((a,b)=>b.vol-a.vol)[0]; // 成交量最大的當龍頭股
+    const instNetSum = stocks.reduce((s,x)=>s+x.instNet,0);
+
+    const conds = [
+      { label:'族群平均漲幅', ok: avgPct>2 && upCount>=3, detail:`平均${avgPct>=0?'+':''}${avgPct.toFixed(2)}%，${upCount}/${stocks.length}檔上漲` },
+      { label:'漲停家數', ok: limitUpCount>=1, detail:`${limitUpCount}檔漲停(≥9.5%)` },
+      { label:'成交量排名前5', ok: top5VolSet.has(industry), detail:`族群成交量排名第 ${volTotals.findIndex(x=>x.industry===industry)+1}` },
+      { label:'主流股帶頭', ok: !!(leader && leader.pct>0 && (upCount/stocks.length)>=0.5), detail: leader?`龍頭股 ${leader.name||leader.code} ${leader.pct>=0?'+':''}${leader.pct.toFixed(2)}%（近似判斷，非嚴格創新高）`:'—' },
+      { label:'外資/主力買超', ok: instNetSum>0, detail:`族群合計${instNetSum>=0?'+':''}${Math.round(instNetSum/1000)}張` },
+    ];
+    const score = conds.filter(c=>c.ok).length * 20;
+    return { industry, count: stocks.length, avgPct, score, conds };
+  }).sort((a,b)=> b.score-a.score || b.avgPct-a.avgPct);
 
   const strong = list.slice(0,3);
   const weak = list.slice(-3).reverse();
@@ -642,7 +742,7 @@ function computeGroupRanking(){
     weakSet: new Set(weak.map(g=>g.industry)),
   };
 
-  // 自動帶入 STEP 2 的前三強/前三弱（使用者仍可手動覆蓋）
+  // 自動帶入 STEP 2 的前三強/前三弱（依評分排序，使用者仍可手動覆蓋）
   state.strong = strong.map(g=>g.industry).join(', ');
   state.weak = weak.map(g=>g.industry).join(', ');
   save();
@@ -658,10 +758,40 @@ function renderGroupRankInfo(){
       : '找不到 data/industry_map.json（族群對照表），資金輪動請手動輸入。可以用 fetch_industry.py 產生這個檔案。';
     return;
   }
-  const strong = groupRanking.list.slice(0,3);
-  const weak = groupRanking.list.slice(-3).reverse();
-  const fmt = g=>`${g.industry} ${g.avgPct>=0?'+':''}${g.avgPct.toFixed(2)}%（${g.count}檔）`;
-  el.innerHTML = `<b style="color:var(--long)">強勢：</b>${strong.map(fmt).join('、')}<br><b style="color:var(--short)">弱勢：</b>${weak.map(fmt).join('、')}`;
+
+  const dateLabel = (groupDataMeta && groupDataMeta.trade_date) ? groupDataMeta.trade_date : (state.groupDate||'—');
+
+  let bonusHtml;
+  if(lastMarketConds){
+    const bonusItems = [
+      {label:'大盤站上5MA/10MA', ok: lastMarketConds.ma},
+      {label:'指數站上VWAP', ok: lastMarketConds.vwap},
+      {label:'台指期同步走強', ok: lastMarketConds.futures},
+      {label:'外資全市場買超', ok: marketForeignBonus===true},
+    ];
+    const bonusScore = bonusItems.filter(b=>b.ok).length*10;
+    const hitLabels = bonusItems.filter(b=>b.ok).map(b=>b.label).join('、') || '無';
+    bonusHtml = `<div style="font-size:12px;color:var(--gold);margin-bottom:10px;">大盤加分：+${bonusScore}/40（${hitLabels}）</div>`;
+  }else{
+    bonusHtml = `<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">大盤加分尚未計算，可以先去 STEP 1 按「讀取大盤指數，自動判斷方向」</div>`;
+  }
+
+  const rows = groupRanking.list.map(g=>{
+    const tier = tierInfo(g.score);
+    const hitLabels = g.conds.filter(c=>c.ok).map(c=>c.label).join('、') || '無符合項目';
+    return `
+      <div class="group-row">
+        <div class="group-row-top">
+          <span class="group-name">${g.industry}</span>
+          <span class="group-score ${tier.cls}">${tier.emoji} ${g.score}/100</span>
+        </div>
+        <div class="group-bar"><div class="group-bar-fill ${tier.cls}" style="width:${g.score}%"></div></div>
+        <div class="group-detail">平均${g.avgPct>=0?'+':''}${g.avgPct.toFixed(2)}% ｜ ${g.count}檔 ｜ ${hitLabels}</div>
+      </div>
+    `;
+  }).join('');
+
+  el.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">資料日期：${dateLabel} ・ 共 ${groupRanking.list.length} 個族群</div>${bonusHtml}${rows}`;
 }
 
 function groupState(s){
@@ -731,6 +861,7 @@ async function fetchMarketAuto(){
     else { dir='neutral'; dirLabel='中性，多空皆可、控風險'; dirCls='neutral'; }
 
     state.market = dir;
+    lastMarketConds = { ma: cond1.ok && cond2.ok, vwap: cond4.ok, futures: cond5.ok };
     save();
     renderMarketToggle();
 
@@ -741,6 +872,7 @@ async function fetchMarketAuto(){
         <div class="tag ${c.ok?'yes':'no'}">${c.ok?'符合':'—'}</div>
       </div>
     `).join('') + `<div class="market-final ${dirCls}">${score}/5 項符合 → ${dirLabel}</div>`;
+    if(groupRanking) renderGroupRankInfo();
   }catch(e){
     statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並跑過，data/market.json 會自動產生。';
   }
@@ -776,9 +908,8 @@ async function fetchLatest(){
     }
     rawStocks = json.stocks || [];
     dataMeta = { trade_date: json.trade_date, fetched_at_utc: json.fetched_at_utc, count: json.count };
-    await fetchIndustryMap();
-    computeGroupRanking();
-    const groupNote = industryMap ? '，族群資料已自動判斷' : '，未找到族群對照表（data/industry_map.json）';
+    await fetchIndustryMap(); // 只是為了加候選股時能自動帶入族群名稱，資金輪動評分獨立在 STEP2 算
+    const groupNote = industryMap ? '，族群名稱已自動帶入' : '，未找到族群對照表（data/industry_map.json）';
     const fallbackNote = usedFallback
       ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）`
       : '';
