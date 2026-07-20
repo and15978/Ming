@@ -124,6 +124,15 @@
   .candidate-row .inst-tag.buy{ background:var(--long-dim); color:var(--long); }
   .candidate-row .inst-tag.sell{ background:var(--short-dim); color:var(--short); }
   .candidate-row .inst-tag.flat{ background:#232c3d; color:var(--muted); }
+
+  .market-cond{ display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .market-cond .tag{ font-size:11px; padding:2px 9px; border-radius:10px; flex:none; }
+  .market-cond .tag.yes{ background:var(--long-dim); color:var(--long); }
+  .market-cond .tag.no{ background:#232c3d; color:var(--muted); }
+  .market-final{ margin-top:10px; padding:12px; border-radius:10px; text-align:center; font-weight:700; font-size:15px; }
+  .market-final.bull{ background:var(--long-dim); color:var(--long); }
+  .market-final.bear{ background:var(--short-dim); color:var(--short); }
+  .market-final.neutral{ background:#2a2f3a; color:#cfd6e4; }
 </style>
 </head>
 <body>
@@ -135,13 +144,39 @@
 <!-- STEP 1 -->
 <div class="section">
   <div class="step-label">STEP 1 ・ 大盤方向</div>
-  <div class="toggle-group" id="marketToggle">
-    <div class="toggle" data-v="bull">偏多<br><span style="font-size:11px">站上5MA/10MA</span></div>
-    <div class="toggle" data-v="neutral">中性</div>
-    <div class="toggle" data-v="bear">偏空<br><span style="font-size:11px">跌破5MA/10MA</span></div>
-  </div>
-  <label>資料日期</label>
+
+  <label>資料日期（判斷這天收盤後，隔日該偏多/偏空/中性）</label>
   <input type="date" id="tradeDate">
+
+  <div class="autofetch-box" style="margin-top:10px;">
+    <div class="hint">讀取 data/market.json，用加權指數 5MA/10MA/量能自動判斷 3 項；VWAP、台指期同步這 2 項要盤中/期貨資料，手動選。5 項裡符合幾項偏多，直接照下面規則分類。</div>
+    <div class="grid2">
+      <div><label>大盤站上/跌破 VWAP</label>
+        <select id="marketVwap">
+          <option value="above">站上</option>
+          <option value="neutral" selected>持平/不確定</option>
+          <option value="below">跌破</option>
+        </select>
+      </div>
+      <div><label>台指期是否同步</label>
+        <select id="marketFutures">
+          <option value="strong">同步走強</option>
+          <option value="neutral" selected>持平/不確定</option>
+          <option value="weak">同步走弱</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="fetchMarketAuto()">讀取大盤指數，自動判斷方向</button>
+    <div id="marketStatus" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+    <div id="marketBreakdown"></div>
+  </div>
+
+  <label style="margin-top:14px;">目前方向（自動判斷完會跳到對應格，也可以自己改）</label>
+  <div class="toggle-group" id="marketToggle">
+    <div class="toggle" data-v="bull">偏多<br><span style="font-size:11px">4~5項符合</span></div>
+    <div class="toggle" data-v="neutral">中性<br><span style="font-size:11px">2~3項符合</span></div>
+    <div class="toggle" data-v="bear">偏空<br><span style="font-size:11px">0~1項符合</span></div>
+  </div>
 </div>
 
 <!-- STEP 2 -->
@@ -261,9 +296,13 @@ function renderInputs(){
   document.getElementById('tradeDate').value = state.date;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
+  document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
+  document.getElementById('marketFutures').value = state.marketFutures || 'neutral';
   document.getElementById('tradeDate').oninput = e=>{ state.date=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
+  document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
+  document.getElementById('marketFutures').onchange = e=>{ state.marketFutures=e.target.value; save(); };
 }
 
 function addStock(){
@@ -637,6 +676,74 @@ function groupState(s){
     if(weakList.some(g=>g && s.group.includes(g))) return 'weak';
   }
   return s.groupStatus || 'normal';
+}
+
+async function fetchMarketAuto(){
+  const statusEl = document.getElementById('marketStatus');
+  const boxEl = document.getElementById('marketBreakdown');
+  statusEl.textContent = '讀取中…';
+  boxEl.innerHTML = '';
+  try{
+    const resp = await fetch('data/market.json', {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const json = await resp.json();
+    const history = (json.history || []).slice().sort((a,b)=> a.date<b.date?-1:1);
+    if(history.length===0) throw new Error('market.json 裡沒有資料');
+
+    const wantedDate = (state.date||'').trim();
+    let idx = -1;
+    if(wantedDate){
+      for(let i=history.length-1;i>=0;i--){ if(history[i].date<=wantedDate){ idx=i; break; } }
+    }
+    if(idx===-1) idx = history.length-1; // 沒選日期，或選的日期比資料還早，就用最後一筆
+
+    if(idx<4){
+      throw new Error('這個日期之前的歷史資料不夠算5MA，換晚一點的日期試試');
+    }
+
+    const today = history[idx];
+    const last5 = history.slice(idx-4, idx+1);
+    const ma5 = last5.reduce((s,r)=>s+r.close,0)/last5.length;
+    let ma10 = null;
+    if(idx>=9){
+      const last10 = history.slice(idx-9, idx+1);
+      ma10 = last10.reduce((s,r)=>s+r.close,0)/last10.length;
+    }
+    const prevVol = idx>0 ? history[idx-1].tradeValue : null;
+    const prior5 = history.slice(Math.max(0,idx-5), idx); // 今天以前的5天，不含今天
+    const vol5avg = prior5.length ? prior5.reduce((s,r)=>s+r.tradeValue,0)/prior5.length : null;
+
+    const cond1 = { label:'站上5MA', ok: today.close > ma5, detail:`收盤 ${today.close.toFixed(2)} ｜ 5MA ${ma5.toFixed(2)}` };
+    const cond2 = ma10!==null
+      ? { label:'站上10MA', ok: today.close > ma10, detail:`收盤 ${today.close.toFixed(2)} ｜ 10MA ${ma10.toFixed(2)}` }
+      : { label:'站上10MA', ok:false, detail:'歷史資料不足10天，暫算未符合', na:true };
+    const volOk = (prevVol!==null && today.tradeValue>prevVol) || (vol5avg!==null && today.tradeValue>vol5avg);
+    const cond3 = { label:'成交量放大', ok: volOk, detail:`今日 ${(today.tradeValue/1e8).toFixed(1)}億 ｜ 昨日 ${prevVol?(prevVol/1e8).toFixed(1)+'億':'?'} ｜ 5日均 ${vol5avg?(vol5avg/1e8).toFixed(1)+'億':'?'}` };
+    const cond4 = { label:'站上VWAP', ok: state.marketVwap==='above', detail: state.marketVwap==='above'?'手動選：站上':state.marketVwap==='below'?'手動選：跌破':'手動選：持平/不確定' };
+    const cond5 = { label:'台指期同步走強', ok: state.marketFutures==='strong', detail: state.marketFutures==='strong'?'手動選：走強':state.marketFutures==='weak'?'手動選：走弱':'手動選：持平/不確定' };
+
+    const conds = [cond1, cond2, cond3, cond4, cond5];
+    const score = conds.filter(c=>c.ok).length;
+
+    let dir, dirLabel, dirCls;
+    if(score>=4){ dir='bull'; dirLabel='偏多，優先做多'; dirCls='bull'; }
+    else if(score<=1){ dir='bear'; dirLabel='偏空，優先放空'; dirCls='bear'; }
+    else { dir='neutral'; dirLabel='中性，多空皆可、控風險'; dirCls='neutral'; }
+
+    state.market = dir;
+    save();
+    renderMarketToggle();
+
+    statusEl.textContent = `已讀取 ${today.date} 加權指數資料`;
+    boxEl.innerHTML = conds.map(c=>`
+      <div class="market-cond">
+        <div>${c.label}<div style="font-size:11px;color:var(--muted);">${c.detail}</div></div>
+        <div class="tag ${c.ok?'yes':'no'}">${c.ok?'符合':'—'}</div>
+      </div>
+    `).join('') + `<div class="market-final ${dirCls}">${score}/5 項符合 → ${dirLabel}</div>`;
+  }catch(e){
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並跑過，data/market.json 會自動產生。';
+  }
 }
 
 async function fetchLatest(){
