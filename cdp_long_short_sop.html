@@ -150,9 +150,11 @@
   .group-bar-fill.tier-cold{ background:var(--short); }
   .group-detail{ font-size:11.5px; color:var(--muted); margin-top:4px; }
 
-  .cdp-zones{ display:flex; gap:3px; }
-  .cdp-zones .zone-chip{ flex:1; text-align:center; font-size:9.5px; padding:5px 1px; border-radius:5px; color:#fff; opacity:0.4; white-space:nowrap; }
-  .cdp-zones .zone-chip.active{ opacity:1; font-weight:700; box-shadow:0 0 0 2px rgba(255,255,255,0.55) inset; }
+  .cdp-ladder{ display:flex; flex-direction:column; border-radius:8px; overflow:hidden; margin-top:6px; }
+  .cdp-ladder .ladder-zone{ padding:6px 10px; font-size:12px; font-weight:700; color:#fff; opacity:0.4; }
+  .cdp-ladder .ladder-zone.active{ opacity:1; box-shadow:0 0 0 2px rgba(255,255,255,0.6) inset; }
+  .cdp-ladder .ladder-line{ padding:3px 10px; font-size:10.5px; color:var(--muted); background:#0b1119; text-align:right; }
+  .cdp-ladder .ladder-line.cdp-line{ color:var(--gold); font-weight:700; }
 </style>
 </head>
 <body>
@@ -453,24 +455,37 @@ function renderStockList(){
 }
 
 function cdpZoneHtml(price, c){
+  // 由上到下：超強 → 超弱，跟參考圖一樣的排法
   const zones = [
-    { key:'superlow',  label:'超弱',   test:p=> p<=c.AL },
-    { key:'low',       label:'弱勢',   test:p=> p>c.AL && p<=c.NL },
-    { key:'midlow',    label:'中性偏弱', test:p=> p>c.NL && p<=c.cdp },
-    { key:'midhigh',   label:'中性偏強', test:p=> p>c.cdp && p<=c.NH },
-    { key:'high',      label:'強勢',   test:p=> p>c.NH && p<=c.AH },
     { key:'superhigh', label:'超強',   test:p=> p>c.AH },
+    { key:'high',      label:'強勢',   test:p=> p>c.NH && p<=c.AH },
+    { key:'midhigh',   label:'中性偏強', test:p=> p>c.cdp && p<=c.NH },
+    { key:'midlow',    label:'中性偏弱', test:p=> p>c.NL && p<=c.cdp },
+    { key:'low',       label:'弱勢',   test:p=> p>c.AL && p<=c.NL },
+    { key:'superlow',  label:'超弱',   test:p=> p<=c.AL },
   ];
-  const colors = ['#1f9e56','rgba(46,204,113,0.75)','rgba(46,204,113,0.4)','rgba(255,84,104,0.4)','rgba(255,84,104,0.75)','#e6435a'];
+  const colors = ['#e6435a','rgba(255,84,104,0.75)','rgba(255,84,104,0.4)','rgba(46,204,113,0.4)','rgba(46,204,113,0.75)','#1f9e56'];
   const activeIdx = (price===null) ? -1 : zones.findIndex(z=>z.test(price));
 
-  const chips = zones.map((z,i)=>`<div class="zone-chip${i===activeIdx?' active':''}" style="background:${colors[i]}">${z.label}</div>`).join('');
-  const nums = `AL ${c.AL.toFixed(2)} ｜ NL ${c.NL.toFixed(2)} ｜ CDP ${c.cdp.toFixed(2)} ｜ NH ${c.NH.toFixed(2)} ｜ AH ${c.AH.toFixed(2)}`;
+  const lines = [
+    `<div class="ladder-zone${activeIdx===0?' active':''}" style="background:${colors[0]}">超強</div>`,
+    `<div class="ladder-line">AH ${c.AH.toFixed(2)}</div>`,
+    `<div class="ladder-zone${activeIdx===1?' active':''}" style="background:${colors[1]}">強勢</div>`,
+    `<div class="ladder-line">NH ${c.NH.toFixed(2)}</div>`,
+    `<div class="ladder-zone${activeIdx===2?' active':''}" style="background:${colors[2]}">中性偏強</div>`,
+    `<div class="ladder-line cdp-line">CDP ${c.cdp.toFixed(2)}</div>`,
+    `<div class="ladder-zone${activeIdx===3?' active':''}" style="background:${colors[3]}">中性偏弱</div>`,
+    `<div class="ladder-line">NL ${c.NL.toFixed(2)}</div>`,
+    `<div class="ladder-zone${activeIdx===4?' active':''}" style="background:${colors[4]}">弱勢</div>`,
+    `<div class="ladder-line">AL ${c.AL.toFixed(2)}</div>`,
+    `<div class="ladder-zone${activeIdx===5?' active':''}" style="background:${colors[5]}">超弱</div>`,
+  ].join('');
+
   const statusLine = activeIdx>=0
     ? `<div style="font-size:11.5px;color:var(--gold);margin-top:5px;">現價 ${price.toFixed(2)} → ${zones[activeIdx].label}</div>`
     : `<div style="font-size:11px;color:var(--muted);margin-top:5px;">尚未輸入現價，先顯示區間</div>`;
 
-  return `<div class="cdp-zones">${chips}</div><div style="font-size:11px;color:var(--muted);margin-top:4px;">${nums}</div>${statusLine}`;
+  return `<div class="cdp-ladder">${lines}</div>${statusLine}`;
 }
 
 function updateCdpPreview(s){
