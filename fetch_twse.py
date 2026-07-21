@@ -143,6 +143,175 @@ def save_market_history(date_iso, data_dir="data"):
         print(f"[大盤指數] 抓取失敗（{e}），略過（不影響個股資料）")
 
 
+def _to_f(v):
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _sma(vals, n, end_idx):
+    """vals 是收盤價或量的list，算 index end_idx（含）往前數n筆的平均，資料不夠回傳None"""
+    start = end_idx - n + 1
+    if start < 0:
+        return None
+    window = vals[start:end_idx + 1]
+    if any(v is None for v in window):
+        return None
+    return sum(window) / n
+
+
+def compute_screener(data_dir="data", lookback_days=25):
+    """
+    明朝 A++ 隔日當沖雷達 v1.0：讀取 data/ 裡逐日累積的 YYYY-MM-DD.json，
+    對每檔股票算 5MA/10MA 趨勢、K棒強弱、量能倍數、20日新高低/10日平台突破、
+    3日累計漲跌排除條件。換手率因為缺流通股本資料，暫不計入判斷。
+    只回傳「全部條件通過」的做多/放空候選（通常個位數到十幾檔），不是全市場列表。
+    """
+    files = sorted(glob.glob(os.path.join(data_dir, "????-??-??.json")))
+    files = files[-lookback_days:]
+    if len(files) < 6:
+        print(f"[篩選雷達] 累積的歷史資料只有 {len(files)} 天，至少要6天才能算5MA，先略過")
+        return None
+
+    # history[code] = [{date, open, high, low, close, volume}, ...] 依日期由舊到新
+    history = {}
+    dates_used = []
+    for fp in files:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                day = json.load(f)
+        except Exception:
+            continue
+        d = day.get("trade_date")
+        stocks = day.get("stocks") or []
+        if not d or not stocks:
+            continue
+        dates_used.append(d)
+        for s in stocks:
+            code = s.get("Code")
+            if not code:
+                continue
+            rec = {
+                "date": d,
+                "open": _to_f(s.get("OpeningPrice")),
+                "high": _to_f(s.get("HighestPrice")),
+                "low": _to_f(s.get("LowestPrice")),
+                "close": _to_f(s.get("ClosingPrice")),
+                "volume": _to_f(s.get("TradeVolume")),
+                "name": s.get("Name"),
+            }
+            history.setdefault(code, []).append(rec)
+
+    if not dates_used:
+        print("[篩選雷達] 沒有可用的歷史資料，略過")
+        return None
+
+    latest_date = dates_used[-1]
+    long_picks = []
+    short_picks = []
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        idx = len(series) - 1
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        vols = [r["volume"] for r in series]
+
+        ma5 = _sma(closes, 5, idx)
+        ma5_prev = _sma(closes, 5, idx - 1) if idx - 1 >= 4 else None
+        ma10 = _sma(closes, 10, idx)
+
+        trend_long = bool(ma5 and ma10 and ma5_prev and today["close"] > ma5 > ma10 and ma5 > ma5_prev)
+        trend_short = bool(ma5 and ma10 and ma5_prev and today["close"] < ma5 < ma10 and ma5 < ma5_prev)
+        if not (trend_long or trend_short):
+            continue  # 第一關沒過，不用再算後面，省時間
+
+        rng = None
+        close_pos = None
+        body_ratio = None
+        if today["high"] is not None and today["low"] is not None and today["open"] is not None:
+            rng = today["high"] - today["low"]
+            if rng and rng > 0:
+                close_pos = (today["close"] - today["low"]) / rng
+                body_ratio = abs(today["close"] - today["open"]) / rng
+        red_k = today["open"] is not None and today["close"] > today["open"]
+        black_k = today["open"] is not None and today["close"] < today["open"]
+        k_long = bool(rng and rng > 0 and red_k and close_pos >= 0.85 and body_ratio >= 0.6)
+        k_short = bool(rng and rng > 0 and black_k and close_pos <= 0.15 and body_ratio >= 0.6)
+
+        vol5avg = _sma(vols, 5, idx - 1) if idx - 1 >= 4 else None
+        vol_ok = bool(vol5avg and today["volume"] and today["volume"] > vol5avg * 1.8)
+        value_approx = (today["volume"] or 0) * (today["close"] or 0)
+        value_ok = value_approx > 300_000_000
+
+        high20 = max((r["high"] for r in series[max(0, idx - 20):idx] if r["high"] is not None), default=None) if idx >= 20 else None
+        low20 = min((r["low"] for r in series[max(0, idx - 20):idx] if r["low"] is not None), default=None) if idx >= 20 else None
+        close10max = max((r["close"] for r in series[max(0, idx - 10):idx]), default=None) if idx >= 10 else None
+        close10min = min((r["close"] for r in series[max(0, idx - 10):idx]), default=None) if idx >= 10 else None
+
+        breakout_long = bool((high20 is not None and today["close"] > high20) or (close10max is not None and today["close"] > close10max))
+        breakout_short = bool((low20 is not None and today["close"] < low20) or (close10min is not None and today["close"] < close10min))
+
+        pct_today = None
+        if idx >= 1 and series[idx - 1]["close"]:
+            pct_today = (today["close"] - series[idx - 1]["close"]) / series[idx - 1]["close"] * 100
+        chg3 = None
+        if idx >= 3 and series[idx - 3]["close"]:
+            chg3 = (today["close"] - series[idx - 3]["close"]) / series[idx - 3]["close"] * 100
+
+        exclude_long = bool((pct_today is not None and pct_today >= 9.5) or (chg3 is not None and chg3 > 20))
+        exclude_short = bool((pct_today is not None and pct_today <= -9.5) or (chg3 is not None and chg3 < -20))
+
+        base = {
+            "code": code, "name": today.get("name"),
+            "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
+            "todayOpen": today["open"], "pctToday": pct_today,
+            "ma5": ma5, "ma10": ma10, "vol5avg": vol5avg,
+            "volToday": today["volume"], "valueApprox": value_approx,
+            "high20": high20, "low20": low20, "close10max": close10max, "close10min": close10min,
+            "chg3": chg3, "historyDays": len(series),
+        }
+
+        if trend_long and k_long and vol_ok and value_ok and breakout_long and not exclude_long:
+            long_picks.append(base)
+        if trend_short and k_short and vol_ok and value_ok and breakout_short and not exclude_short:
+            short_picks.append(base)
+
+    long_picks.sort(key=lambda x: (x["volToday"] or 0) / (x["vol5avg"] or 1), reverse=True)
+    short_picks.sort(key=lambda x: (x["volToday"] or 0) / (x["vol5avg"] or 1), reverse=True)
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "checked_count": len(history),
+        "long": long_picks,
+        "short": short_picks,
+        "note": "換手率條件因缺流通股本資料，未計入判斷；突破條件為20日新高/低或10日收盤高低點近似判斷",
+    }
+
+
+def save_screener(data_dir="data"):
+    """把明朝A++篩選結果存成 data/screener.json（最新一筆）
+    以及 data/screener_YYYY-MM-DD.json（帶日期，供之後回顧選日期用）。
+    失敗不影響其他資料抓取。"""
+    try:
+        result = compute_screener(data_dir=data_dir)
+        if result is None:
+            return
+        out_path = os.path.join(data_dir, "screener.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"screener_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[篩選雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔（用了 {result['history_days']} 天歷史資料）")
+    except Exception as e:
+        print(f"[篩選雷達] 計算失敗（{e}），略過（不影響個股資料）")
+
+
 def http_get_json(url):
     req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:
@@ -461,6 +630,7 @@ def main():
         merge_extra_data(stocks, date_iso)
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
         save_market_history(date_iso)
+        save_screener()
         return
 
     # 排程執行（不帶參數）：
@@ -484,6 +654,7 @@ def main():
     merge_extra_data(stocks, date_iso)
     save(stocks, date_iso, source, update_latest=True)
     save_market_history(date_iso)
+    save_screener()
 
 
 if __name__ == "__main__":
