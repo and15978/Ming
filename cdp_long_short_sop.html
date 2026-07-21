@@ -149,6 +149,10 @@
   .group-bar-fill.tier-warn{ background:var(--gold); }
   .group-bar-fill.tier-cold{ background:var(--short); }
   .group-detail{ font-size:11.5px; color:var(--muted); margin-top:4px; }
+
+  .cdp-zones{ display:flex; gap:3px; }
+  .cdp-zones .zone-chip{ flex:1; text-align:center; font-size:9.5px; padding:5px 1px; border-radius:5px; color:#fff; opacity:0.4; white-space:nowrap; }
+  .cdp-zones .zone-chip.active{ opacity:1; font-weight:700; box-shadow:0 0 0 2px rgba(255,255,255,0.55) inset; }
 </style>
 </head>
 <body>
@@ -218,11 +222,13 @@
 
   <div class="autofetch-box">
     <div class="hint">讀取本站 data/latest.json，把最新一個交易日的收盤價當成「昨收/昨高/昨低」自動算 CDP，法人買賣超也會一起帶入。現價、今量、VWAP、5分K 這些屬於明天盤中的資訊，讀取後仍要手動補。</div>
-    <div class="grid2">
+    <label>個股資料要讀哪一天</label>
+    <input type="date" id="stockDate">
+    <div class="grid2" style="margin-top:10px;">
       <div><label>漲跌幅門檻 (%)</label><input type="number" step="0.1" id="pctThresh" value="9.5"></div>
       <div><label>成交量門檻 (張)</label><input type="number" id="volThresh" value="5000"></div>
     </div>
-    <button class="btn btn-primary" onclick="fetchLatest()">讀取資料（依 STEP 1 選的日期）</button>
+    <button class="btn btn-primary" onclick="fetchLatest()">讀取資料</button>
     <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
     <div id="fetchStatus" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
     <div id="candidateList"></div>
@@ -291,6 +297,9 @@ function load(){
   if(!state.groupDate){
     state.groupDate = state.date;
   }
+  if(!state.stockDate){
+    state.stockDate = state.date;
+  }
   if(typeof state.groupDetailVisible !== 'boolean'){
     state.groupDetailVisible = false;
   }
@@ -324,12 +333,14 @@ function renderMarketToggle(){
 function renderInputs(){
   document.getElementById('tradeDate').value = state.date;
   document.getElementById('groupDate').value = state.groupDate;
+  document.getElementById('stockDate').value = state.stockDate;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
   document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
   document.getElementById('marketFutures').value = state.marketFutures || 'neutral';
   document.getElementById('tradeDate').oninput = e=>{ state.date=e.target.value; save(); };
   document.getElementById('groupDate').oninput = e=>{ state.groupDate=e.target.value; save(); };
+  document.getElementById('stockDate').oninput = e=>{ state.stockDate=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
@@ -441,14 +452,35 @@ function renderStockList(){
   });
 }
 
+function cdpZoneHtml(price, c){
+  const zones = [
+    { key:'superlow',  label:'超弱',   test:p=> p<=c.AL },
+    { key:'low',       label:'弱勢',   test:p=> p>c.AL && p<=c.NL },
+    { key:'midlow',    label:'中性偏弱', test:p=> p>c.NL && p<=c.cdp },
+    { key:'midhigh',   label:'中性偏強', test:p=> p>c.cdp && p<=c.NH },
+    { key:'high',      label:'強勢',   test:p=> p>c.NH && p<=c.AH },
+    { key:'superhigh', label:'超強',   test:p=> p>c.AH },
+  ];
+  const colors = ['#1f9e56','rgba(46,204,113,0.75)','rgba(46,204,113,0.4)','rgba(255,84,104,0.4)','rgba(255,84,104,0.75)','#e6435a'];
+  const activeIdx = (price===null) ? -1 : zones.findIndex(z=>z.test(price));
+
+  const chips = zones.map((z,i)=>`<div class="zone-chip${i===activeIdx?' active':''}" style="background:${colors[i]}">${z.label}</div>`).join('');
+  const nums = `AL ${c.AL.toFixed(2)} ｜ NL ${c.NL.toFixed(2)} ｜ CDP ${c.cdp.toFixed(2)} ｜ NH ${c.NH.toFixed(2)} ｜ AH ${c.AH.toFixed(2)}`;
+  const statusLine = activeIdx>=0
+    ? `<div style="font-size:11.5px;color:var(--gold);margin-top:5px;">現價 ${price.toFixed(2)} → ${zones[activeIdx].label}</div>`
+    : `<div style="font-size:11px;color:var(--muted);margin-top:5px;">尚未輸入現價，先顯示區間</div>`;
+
+  return `<div class="cdp-zones">${chips}</div><div style="font-size:11px;color:var(--muted);margin-top:4px;">${nums}</div>${statusLine}`;
+}
+
 function updateCdpPreview(s){
   const el = document.getElementById('cdpPreview-'+s.id);
   if(!el) return;
   const c = computeCDP(s);
   if(!c){
-    el.textContent = 'CDP 尚未計算（需要昨收/昨高/昨低）';
+    el.innerHTML = 'CDP 尚未計算（需要昨收/昨高/昨低）';
   }else{
-    el.textContent = `CDP ${c.cdp.toFixed(2)} ｜ AH ${c.AH.toFixed(2)} NH ${c.NH.toFixed(2)} ｜ NL ${c.NL.toFixed(2)} AL ${c.AL.toFixed(2)}`;
+    el.innerHTML = cdpZoneHtml(num(s.price), c);
   }
 }
 
@@ -568,8 +600,8 @@ function renderResultCard(r, dir){
     : `進場：跌破關鍵價再進場，不搶底　|　停損：站上前高/VWAP　|　停利：CDP下一支撐位 或 1R~2R`;
 
   const cdpLine = r.c
-    ? `CDP ${r.c.cdp.toFixed(2)} ｜ AH ${r.c.AH.toFixed(2)}　NH ${r.c.NH.toFixed(2)} ｜ NL ${r.c.NL.toFixed(2)}　AL ${r.c.AL.toFixed(2)}`
-    : 'CDP：昨收/昨高/昨低不足，無法計算';
+    ? cdpZoneHtml(num(r.s.price), r.c)
+    : '<div style="font-size:11.5px;color:var(--gold);">CDP：昨收/昨高/昨低不足，無法計算</div>';
 
   return `
     <div class="result-card ${isLong?'result-long':'result-short'}">
@@ -577,7 +609,7 @@ function renderResultCard(r, dir){
         <div class="result-name">${isLong?'🐂':'🐻'} ${name} <span style="color:var(--muted);font-size:12px;">${r.s.code||''}</span></div>
         <div class="score-badge ${rec.cls}">${score}/6 ・ ${rec.text}</div>
       </div>
-      <div style="font-size:11.5px;color:var(--gold);margin-top:6px;">${cdpLine}</div>
+      <div style="margin-top:6px;">${cdpLine}</div>
       <ul class="cond-list">
         ${conds.map(c=>`<li class="${c.ok?'ok':''}">${c.label}</li>`).join('')}
       </ul>
@@ -936,7 +968,7 @@ async function fetchLatest(){
   document.getElementById('addCandidatesBtn').style.display = 'none';
   document.getElementById('candidateList').innerHTML = '';
 
-  const wantedDate = (state.date||'').trim(); // STEP1 選的日期，格式 YYYY-MM-DD
+  const wantedDate = (state.stockDate||'').trim(); // STEP3 自己選的日期，格式 YYYY-MM-DD
   const primaryFile = wantedDate ? `data/${wantedDate}.json` : 'data/latest.json';
 
   async function tryFetch(path){
