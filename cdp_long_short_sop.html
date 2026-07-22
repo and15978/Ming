@@ -150,10 +150,10 @@
   .group-bar-fill.tier-cold{ background:var(--short); }
   .group-detail{ font-size:11.5px; color:var(--muted); margin-top:4px; }
 
-  .cdp-ladder{ display:flex; flex-direction:column; border-radius:8px; overflow:hidden; margin-top:6px; }
-  .cdp-ladder .ladder-zone{ padding:6px 10px; font-size:12px; font-weight:700; color:#fff; opacity:0.4; }
+  .cdp-ladder{ display:flex; flex-direction:column; border-radius:6px; overflow:hidden; margin-top:6px; }
+  .cdp-ladder .ladder-zone{ padding:3px 8px; font-size:10px; font-weight:700; color:#fff; opacity:0.4; line-height:1.3; }
   .cdp-ladder .ladder-zone.active{ opacity:1; box-shadow:0 0 0 2px rgba(255,255,255,0.6) inset; }
-  .cdp-ladder .ladder-line{ padding:3px 10px; font-size:10.5px; color:var(--muted); background:#0b1119; text-align:right; }
+  .cdp-ladder .ladder-line{ padding:1px 8px; font-size:9.5px; color:var(--muted); background:#0b1119; text-align:right; line-height:1.4; }
   .cdp-ladder .ladder-line.cdp-line{ color:var(--gold); font-weight:700; }
 </style>
 </head>
@@ -764,7 +764,8 @@ function screenerCard(pick, dir){
         <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
         ${pctHtml}
       </div>
-      <div style="margin-top:6px;">${cdpHtml}</div>
+      <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
+      <div style="margin-top:4px;">${cdpHtml}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -860,7 +861,8 @@ function reversalCard(pick, dir){
         <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
         ${pctHtml}
       </div>
-      <div style="margin-top:6px;">${cdpHtml}</div>
+      <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
+      <div style="margin-top:4px;">${cdpHtml}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
