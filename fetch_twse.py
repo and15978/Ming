@@ -161,20 +161,18 @@ def _sma(vals, n, end_idx):
     return sum(window) / n
 
 
-def compute_screener(data_dir="data", lookback_days=25):
+def _load_price_history(data_dir="data", lookback_days=25, min_days=6):
     """
-    明朝 A++ 隔日當沖雷達 v1.0：讀取 data/ 裡逐日累積的 YYYY-MM-DD.json，
-    對每檔股票算 5MA/10MA 趨勢、K棒強弱、量能倍數、20日新高低/10日平台突破、
-    3日累計漲跌排除條件。換手率因為缺流通股本資料，暫不計入判斷。
-    只回傳「全部條件通過」的做多/放空候選（通常個位數到十幾檔），不是全市場列表。
+    讀取 data/ 裡逐日累積的 YYYY-MM-DD.json，組成：
+    history[code] = [{date, open, high, low, close, volume, name}, ...]（依日期由舊到新）
+    回傳 (history, dates_used)，資料不足回傳 (None, [])
     """
     files = sorted(glob.glob(os.path.join(data_dir, "????-??-??.json")))
     files = files[-lookback_days:]
-    if len(files) < 6:
-        print(f"[篩選雷達] 累積的歷史資料只有 {len(files)} 天，至少要6天才能算5MA，先略過")
-        return None
+    if len(files) < min_days:
+        print(f"[篩選雷達] 累積的歷史資料只有 {len(files)} 天，至少要{min_days}天才能算，先略過")
+        return None, []
 
-    # history[code] = [{date, open, high, low, close, volume}, ...] 依日期由舊到新
     history = {}
     dates_used = []
     for fp in files:
@@ -205,6 +203,18 @@ def compute_screener(data_dir="data", lookback_days=25):
 
     if not dates_used:
         print("[篩選雷達] 沒有可用的歷史資料，略過")
+        return None, []
+    return history, dates_used
+
+
+def compute_screener(data_dir="data", lookback_days=25):
+    """
+    明朝 A++ 隔日當沖雷達 v1.0：對每檔股票算 5MA/10MA 趨勢、K棒強弱、量能倍數、
+    20日新高低/10日平台突破、3日累計漲跌排除條件。換手率因為缺流通股本資料，暫不計入判斷。
+    只回傳「全部條件通過」的做多/放空候選（通常個位數到十幾檔），不是全市場列表。
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=6)
+    if history is None:
         return None
 
     latest_date = dates_used[-1]
@@ -291,6 +301,101 @@ def compute_screener(data_dir="data", lookback_days=25):
         "short": short_picks,
         "note": "換手率條件因缺流通股本資料，未計入判斷；突破條件為20日新高/低或10日收盤高低點近似判斷",
     }
+
+
+def compute_reversal_screener(data_dir="data", lookback_days=25):
+    """
+    隔日做多/放空反轉雷達（收盤後）：找超跌/超漲後帶量反轉的股票。
+    做多：近20日跌幅>20% 或 近10日跌幅>15%（符合任一即可）＋爆量＋收盤明顯高於當日低點＋收紅K＋高振幅
+    放空：近20日漲幅>20% 或 近10日漲幅>15%（符合任一即可）＋爆量＋收盤明顯低於當日高點＋收黑K＋高振幅
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=11)
+    if history is None:
+        return None
+
+    latest_date = dates_used[-1]
+    long_picks = []
+    short_picks = []
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        idx = len(series) - 1
+        if idx < 10:
+            continue  # 至少要有近10日資料
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        vols = [r["volume"] for r in series]
+        prev_close = series[idx - 1]["close"] if idx >= 1 else None
+
+        close20ago = series[idx - 20]["close"] if idx >= 20 else None
+        chg20 = ((today["close"] - close20ago) / close20ago * 100) if close20ago else None
+        close10ago = series[idx - 10]["close"]
+        chg10 = ((today["close"] - close10ago) / close10ago * 100) if close10ago else None
+
+        cond1_long = bool((chg20 is not None and chg20 <= -20) or (chg10 is not None and chg10 <= -15))
+        cond1_short = bool((chg20 is not None and chg20 >= 20) or (chg10 is not None and chg10 >= 15))
+        if not (cond1_long or cond1_short):
+            continue
+
+        vol5avg = _sma(vols, 5, idx - 1) if idx - 1 >= 4 else None
+        vol_ok = bool(vol5avg and today["volume"] and today["volume"] > vol5avg * 1.8)
+
+        long_close_strong = bool(today["low"] and today["close"] > today["low"] * 1.03)
+        short_close_weak = bool(today["high"] and today["close"] < today["high"] * 0.97)
+
+        red_k = bool(today["open"] is not None and today["close"] > today["open"])
+        black_k = bool(today["open"] is not None and today["close"] < today["open"])
+
+        amplitude = None
+        if today["high"] is not None and today["low"] is not None and prev_close:
+            amplitude = (today["high"] - today["low"]) / prev_close * 100
+        amp_ok = bool(amplitude is not None and amplitude > 6)
+
+        base = {
+            "code": code, "name": today.get("name"),
+            "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
+            "todayOpen": today["open"],
+            "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
+            "chg20": chg20, "chg10": chg10,
+            "vol5avg": vol5avg, "volToday": today["volume"],
+            "amplitude": amplitude, "historyDays": len(series),
+        }
+
+        if cond1_long and vol_ok and long_close_strong and red_k and amp_ok:
+            long_picks.append(base)
+        if cond1_short and vol_ok and short_close_weak and black_k and amp_ok:
+            short_picks.append(base)
+
+    long_picks.sort(key=lambda x: x["chg10"] if x["chg10"] is not None else 0)
+    short_picks.sort(key=lambda x: -(x["chg10"] if x["chg10"] is not None else 0))
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "checked_count": len(history),
+        "long": long_picks,
+        "short": short_picks,
+        "note": "條件1為「近20日累計>20%」或「近10日累計>15%」符合任一即算通過；振幅=(當日高-當日低)/昨收",
+    }
+
+
+def save_reversal_screener(data_dir="data"):
+    """把反轉雷達結果存成 data/reversal_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
+    try:
+        result = compute_reversal_screener(data_dir=data_dir)
+        if result is None:
+            return
+        out_path = os.path.join(data_dir, "reversal_screener.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"reversal_screener_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[反轉雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+    except Exception as e:
+        print(f"[反轉雷達] 計算失敗（{e}），略過（不影響個股資料）")
 
 
 def save_screener(data_dir="data"):
@@ -631,6 +736,7 @@ def main():
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
         save_market_history(date_iso)
         save_screener()
+        save_reversal_screener()
         return
 
     # 排程執行（不帶參數）：
@@ -655,6 +761,7 @@ def main():
     save(stocks, date_iso, source, update_latest=True)
     save_market_history(date_iso)
     save_screener()
+    save_reversal_screener()
 
 
 if __name__ == "__main__":
