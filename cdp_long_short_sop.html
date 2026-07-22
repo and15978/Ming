@@ -234,6 +234,22 @@
   <div id="screenerResults"></div>
 </div>
 
+<!-- STEP 4 -->
+<div class="section">
+  <div class="step-label">STEP 4 ・ 反轉雷達（收盤後，找超跌/超漲帶量反轉）</div>
+
+  <div class="autofetch-box">
+    <div class="hint">讀取 data/reversal_screener.json。做多找「近20日跌幅&gt;20% 或 近10日跌幅&gt;15%」（符合任一即可）＋爆量＋收盤明顯高於當日低點＋收紅K＋振幅&gt;6%；放空條件方向相反。跟STEP3是不同邏輯，一個抓突破、一個抓反轉。</div>
+    <label>要看哪一天收盤後算出來的結果</label>
+    <input type="date" id="reversalDate">
+    <button class="btn btn-primary" onclick="fetchReversal()" style="margin-top:10px;">讀取反轉雷達結果</button>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
+    <div id="reversalStatus" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+  </div>
+
+  <div id="reversalResults"></div>
+</div>
+
 <!-- REFERENCE CARDS -->
 <div class="ref-card">
   <div class="ref-title long">🐂 做多條件（至少符合 5 項才積極操作）</div>
@@ -289,6 +305,9 @@ function load(){
   if(!state.screenerDate){
     state.screenerDate = state.date;
   }
+  if(!state.reversalDate){
+    state.reversalDate = state.date;
+  }
   if(typeof state.groupDetailVisible !== 'boolean'){
     state.groupDetailVisible = false;
   }
@@ -311,6 +330,7 @@ function renderInputs(){
   document.getElementById('tradeDate').value = state.date;
   document.getElementById('groupDate').value = state.groupDate;
   document.getElementById('screenerDate').value = state.screenerDate;
+  document.getElementById('reversalDate').value = state.reversalDate;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
   document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
@@ -318,6 +338,7 @@ function renderInputs(){
   document.getElementById('tradeDate').oninput = e=>{ state.date=e.target.value; save(); };
   document.getElementById('groupDate').oninput = e=>{ state.groupDate=e.target.value; save(); };
   document.getElementById('screenerDate').oninput = e=>{ state.screenerDate=e.target.value; save(); };
+  document.getElementById('reversalDate').oninput = e=>{ state.reversalDate=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
@@ -771,6 +792,102 @@ function renderScreenerResults(json){
   if(shortList.length){
     html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）</div>`;
     html += shortList.map(p=>screenerCard(p,'short')).join('');
+    html += `</div>`;
+  }
+  if(json.note){
+    html += `<div class="footer-note">${json.note}</div>`;
+  }
+  wrap.innerHTML = html;
+}
+
+async function fetchReversal(){
+  const statusEl = document.getElementById('reversalStatus');
+  const wrap = document.getElementById('reversalResults');
+  statusEl.textContent = '讀取中…';
+
+  const wantedDate = (state.reversalDate||'').trim();
+  const primaryFile = wantedDate ? `data/reversal_screener_${wantedDate}.json` : 'data/reversal_screener.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/reversal_screener.json'){
+        json = await tryFetch('data/reversal_screener.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
+    const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
+    statusEl.textContent = `已讀取 ${json.trade_date||'?'} 反轉雷達結果，共檢查 ${json.checked_count||0} 檔，用了 ${json.history_days||0} 天歷史資料${fallbackNote}`;
+    renderReversalResults(json);
+  }catch(e){
+    wrap.innerHTML = '';
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/reversal_screener.json 會自動產生。';
+  }
+}
+
+function reversalCard(pick, dir){
+  const isLong = dir==='long';
+  const c = computeCDP({prevClose:pick.prevClose, prevHigh:pick.prevHigh, prevLow:pick.prevLow});
+  const cdpHtml = c ? cdpZoneHtml(null, c) : '<div style="font-size:11px;color:var(--muted);">CDP資料不足</div>';
+  const pct = pick.pctToday;
+  const pctHtml = (pct!==null && pct!==undefined)
+    ? `<span style="font-size:13px;font-weight:700;color:${pct>=0?'var(--long)':'var(--short)'};">${pct>=0?'+':''}${pct.toFixed(2)}%</span>` : '';
+  const volZhang = pick.volToday ? Math.round(pick.volToday/1000) : null;
+  const volRatio = (pick.vol5avg && pick.volToday) ? (pick.volToday/pick.vol5avg).toFixed(2) : null;
+
+  const detailLines = [
+    `近20日累計 ${(pick.chg20!==null&&pick.chg20!==undefined)?(pick.chg20>=0?'+':'')+pick.chg20.toFixed(2)+'%':'—'} ｜ 近10日累計 ${(pick.chg10!==null&&pick.chg10!==undefined)?(pick.chg10>=0?'+':'')+pick.chg10.toFixed(2)+'%':'—'}`,
+    `量能 ${volZhang?volZhang+'張':'—'} ｜ 5日均量倍數 ${volRatio?volRatio+'倍':'—'}`,
+    `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
+    isLong ? `收盤 ${pick.prevClose.toFixed(2)} 明顯高於當日低點 ${pick.prevLow?pick.prevLow.toFixed(2):'—'}（長下影，買盤回升）`
+           : `收盤 ${pick.prevClose.toFixed(2)} 明顯低於當日高點 ${pick.prevHigh?pick.prevHigh.toFixed(2):'—'}（長上影，賣壓轉強）`,
+  ];
+
+  return `
+    <div class="result-card ${isLong?'result-long':'result-short'}">
+      <div class="result-head">
+        <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
+        ${pctHtml}
+      </div>
+      <div style="margin-top:6px;">${cdpHtml}</div>
+      <ul class="cond-list" style="margin-top:8px;">
+        ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
+      </ul>
+      <div class="plan-line">${isLong ? '超跌反彈：等待站上關鍵價再進場，別搶最低點' : '超漲拉回：等待跌破關鍵價再進場，別搶最高點'}</div>
+    </div>
+  `;
+}
+
+function renderReversalResults(json){
+  const wrap = document.getElementById('reversalResults');
+  const longList = json.long || [];
+  const shortList = json.short || [];
+
+  if(longList.length===0 && shortList.length===0){
+    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票符合反轉雷達的條件，這是正常的，不是每天都有超跌超漲帶量反轉的股票。</div></div>`;
+    return;
+  }
+
+  let html = '';
+  if(longList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（超跌反彈，${longList.length}檔）</div>`;
+    html += longList.map(p=>reversalCard(p,'long')).join('');
+    html += `</div>`;
+  }
+  if(shortList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（超漲拉回，${shortList.length}檔）</div>`;
+    html += shortList.map(p=>reversalCard(p,'short')).join('');
     html += `</div>`;
   }
   if(json.note){
