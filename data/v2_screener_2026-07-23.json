@@ -1,0 +1,1 @@
+{"trade_date": "2026-07-23", "history_days": 57, "checked_count": 1374, "long": [], "short": [], "note": "V2版在V1反轉雷達基礎上多加KD(9,3,3)與MACD(12,26,9)判斷；MACD/KD需要較長歷史資料才準確，資料累積不足60天時精準度會隨天數增加而改善。"}
