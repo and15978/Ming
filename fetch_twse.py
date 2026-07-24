@@ -381,6 +381,185 @@ def compute_reversal_screener(data_dir="data", lookback_days=25):
     }
 
 
+def _ema_series(values, span):
+    """回傳跟values等長的EMA序列。前面暖身不足的位置是None，
+    從第span個值開始，先用簡單移動平均當種子，之後才用EMA遞迴平滑。"""
+    n = len(values)
+    result = [None] * n
+    if n < span:
+        return result
+    window = values[:span]
+    if any(v is None for v in window):
+        return result
+    seed = sum(window) / span
+    result[span - 1] = seed
+    alpha = 2 / (span + 1)
+    prev = seed
+    for i in range(span, n):
+        if values[i] is None:
+            break
+        prev = values[i] * alpha + prev * (1 - alpha)
+        result[i] = prev
+    return result
+
+
+def _compute_macd(closes, fast=12, slow=26, signal_span=9):
+    """回傳 (macd_line, signal_line, histogram)，三個list跟closes等長"""
+    ema_fast = _ema_series(closes, fast)
+    ema_slow = _ema_series(closes, slow)
+    macd_line = [(a - b) if (a is not None and b is not None) else None for a, b in zip(ema_fast, ema_slow)]
+
+    valid_idx = [i for i, v in enumerate(macd_line) if v is not None]
+    signal = [None] * len(closes)
+    if len(valid_idx) >= signal_span:
+        vals = [macd_line[i] for i in valid_idx]
+        sig_vals = _ema_series(vals, signal_span)
+        for j, i in enumerate(valid_idx):
+            signal[i] = sig_vals[j]
+    hist = [(m - s) if (m is not None and s is not None) else None for m, s in zip(macd_line, signal)]
+    return macd_line, signal, hist
+
+
+def _compute_kd(highs, lows, closes, n=9):
+    """標準KD(9,3,3)，回傳 (k_series, d_series)"""
+    length = len(closes)
+    rsv = [None] * length
+    for i in range(length):
+        if i >= n - 1:
+            window_h = highs[i - n + 1:i + 1]
+            window_l = lows[i - n + 1:i + 1]
+            if any(v is None for v in window_h) or any(v is None for v in window_l) or closes[i] is None:
+                continue
+            hh, ll = max(window_h), min(window_l)
+            rsv[i] = ((closes[i] - ll) / (hh - ll) * 100) if (hh - ll) > 0 else 50.0
+
+    k = [None] * length
+    d = [None] * length
+    prev_k = prev_d = 50.0
+    started = False
+    for i in range(length):
+        if rsv[i] is None:
+            continue
+        if not started:
+            prev_k = prev_d = rsv[i]
+            started = True
+        else:
+            prev_k = prev_k * 2 / 3 + rsv[i] * 1 / 3
+            prev_d = prev_d * 2 / 3 + prev_k * 1 / 3
+        k[i], d[i] = prev_k, prev_d
+    return k, d
+
+
+def compute_v2_screener(data_dir="data", lookback_days=60):
+    """
+    V2 隔日多空雷達（收盤後）：在V1反轉雷達的基礎上，多加KD跟MACD兩個技術指標。
+    這兩個指標需要比較長的歷史（尤其MACD的26日EMA），資料累積不夠長時，
+    早期會有股票因為算不出來被跳過，之後資料越多越準。
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
+    if history is None:
+        return None
+
+    latest_date = dates_used[-1]
+    long_picks = []
+    short_picks = []
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        idx = len(series) - 1
+        if idx < 20:
+            continue  # 至少要有近20日資料算跌幅/漲幅
+
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        highs = [r["high"] for r in series]
+        lows = [r["low"] for r in series]
+        vols = [r["volume"] for r in series]
+        prev_close = series[idx - 1]["close"] if idx >= 1 else None
+
+        close20ago = series[idx - 20]["close"]
+        chg20 = ((today["close"] - close20ago) / close20ago * 100) if close20ago else None
+        cond1_long = bool(chg20 is not None and chg20 <= -20)
+        cond1_short = bool(chg20 is not None and chg20 >= 20)
+        if not (cond1_long or cond1_short):
+            continue
+
+        vol10avg = _sma(vols, 10, idx - 1) if idx - 1 >= 9 else None
+        vol_ok = bool(vol10avg and today["volume"] and today["volume"] > vol10avg * 2)
+
+        red_k = bool(today["open"] is not None and today["close"] > today["open"])
+        black_k = bool(today["open"] is not None and today["close"] < today["open"])
+
+        low_support_ok = bool(today["low"] and today["close"] > today["low"] * 1.03)
+        near_high_ok = bool(today["high"] and today["close"] > today["high"] * 0.98)
+        near_low_pressure_ok = bool(today["high"] and today["close"] < today["high"] * 0.97)
+
+        ma5 = _sma(closes, 5, idx)
+        above_ma5 = bool(ma5 and today["close"] > ma5)
+        below_ma5 = bool(ma5 and today["close"] < ma5)
+
+        k_series, d_series = _compute_kd(highs, lows, closes)
+        k_today, k_yday = k_series[idx], (k_series[idx - 1] if idx >= 1 else None)
+        kd_up = bool(k_today is not None and k_yday is not None and k_today > k_yday)
+        kd_down = bool(k_today is not None and k_yday is not None and k_today < k_yday)
+
+        _, _, hist_series = _compute_macd(closes)
+        hist_today, hist_yday = hist_series[idx], (hist_series[idx - 1] if idx >= 1 else None)
+        macd_green_shrink = bool(hist_today is not None and hist_yday is not None and hist_yday < 0 and hist_today > hist_yday)
+        macd_red_shrink = bool(hist_today is not None and hist_yday is not None and hist_yday > 0 and hist_today < hist_yday)
+
+        amplitude = None
+        if today["high"] is not None and today["low"] is not None and prev_close:
+            amplitude = (today["high"] - today["low"]) / prev_close * 100
+        amp_ok = bool(amplitude is not None and amplitude > 6)
+
+        base = {
+            "code": code, "name": today.get("name"),
+            "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
+            "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
+            "chg20": chg20, "vol10avg": vol10avg, "volToday": today["volume"],
+            "ma5": ma5, "kToday": k_today, "kYesterday": k_yday,
+            "macdHistToday": hist_today, "macdHistYesterday": hist_yday,
+            "amplitude": amplitude, "historyDays": len(series),
+        }
+
+        if cond1_long and vol_ok and red_k and low_support_ok and near_high_ok and above_ma5 and kd_up and macd_green_shrink and amp_ok:
+            long_picks.append(base)
+        if cond1_short and vol_ok and black_k and near_low_pressure_ok and below_ma5 and kd_down and macd_red_shrink and amp_ok:
+            short_picks.append(base)
+
+    long_picks.sort(key=lambda x: x["chg20"] if x["chg20"] is not None else 0)
+    short_picks.sort(key=lambda x: -(x["chg20"] if x["chg20"] is not None else 0))
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "checked_count": len(history),
+        "long": long_picks,
+        "short": short_picks,
+        "note": "V2版在V1反轉雷達基礎上多加KD(9,3,3)與MACD(12,26,9)判斷；MACD/KD需要較長歷史資料才準確，資料累積不足60天時精準度會隨天數增加而改善。",
+    }
+
+
+def save_v2_screener(data_dir="data"):
+    """把V2雷達結果存成 data/v2_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
+    try:
+        result = compute_v2_screener(data_dir=data_dir)
+        if result is None:
+            return
+        out_path = os.path.join(data_dir, "v2_screener.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"v2_screener_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[V2雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+    except Exception as e:
+        print(f"[V2雷達] 計算失敗（{e}），略過（不影響個股資料）")
+
+
 def save_reversal_screener(data_dir="data"):
     """把反轉雷達結果存成 data/reversal_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
     try:
@@ -737,6 +916,7 @@ def main():
         save_market_history(date_iso)
         save_screener()
         save_reversal_screener()
+        save_v2_screener()
         return
 
     # 排程執行（不帶參數）：
@@ -762,6 +942,7 @@ def main():
     save_market_history(date_iso)
     save_screener()
     save_reversal_screener()
+    save_v2_screener()
 
 
 if __name__ == "__main__":
