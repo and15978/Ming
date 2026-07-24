@@ -250,6 +250,22 @@
   <div id="reversalResults"></div>
 </div>
 
+<!-- STEP 5 -->
+<div class="section">
+  <div class="step-label">STEP 5 ・ V2 雷達（收盤後，反轉雷達加KD/MACD版）</div>
+
+  <div class="autofetch-box">
+    <div class="hint">讀取 data/v2_screener.json。在STEP4的基礎上多加兩項：KD(9,3,3) K值今日>昨日（做多）/今日&lt;昨日（放空），MACD(12,26,9) 柱狀圖由綠轉縮或翻紅（做多）/由紅轉縮或翻綠（放空）。量能門檻也改成10日均量×2倍（比STEP4嚴格）。這兩個指標需要比較長的歷史資料才準，資料累積不夠60天時，前期可能有股票因為算不出來被跳過。</div>
+    <label>要看哪一天收盤後算出來的結果</label>
+    <input type="date" id="v2Date">
+    <button class="btn btn-primary" onclick="fetchV2()" style="margin-top:10px;">讀取 V2 雷達結果</button>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
+    <div id="v2Status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+  </div>
+
+  <div id="v2Results"></div>
+</div>
+
 <!-- REFERENCE CARDS -->
 <div class="ref-card">
   <div class="ref-title long">🐂 做多條件（至少符合 5 項才積極操作）</div>
@@ -308,6 +324,9 @@ function load(){
   if(!state.reversalDate){
     state.reversalDate = state.date;
   }
+  if(!state.v2Date){
+    state.v2Date = state.date;
+  }
   if(typeof state.groupDetailVisible !== 'boolean'){
     state.groupDetailVisible = false;
   }
@@ -331,6 +350,7 @@ function renderInputs(){
   document.getElementById('groupDate').value = state.groupDate;
   document.getElementById('screenerDate').value = state.screenerDate;
   document.getElementById('reversalDate').value = state.reversalDate;
+  document.getElementById('v2Date').value = state.v2Date;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
   document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
@@ -339,6 +359,7 @@ function renderInputs(){
   document.getElementById('groupDate').oninput = e=>{ state.groupDate=e.target.value; save(); };
   document.getElementById('screenerDate').oninput = e=>{ state.screenerDate=e.target.value; save(); };
   document.getElementById('reversalDate').oninput = e=>{ state.reversalDate=e.target.value; save(); };
+  document.getElementById('v2Date').oninput = e=>{ state.v2Date=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
@@ -890,6 +911,104 @@ function renderReversalResults(json){
   if(shortList.length){
     html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（超漲拉回，${shortList.length}檔）</div>`;
     html += shortList.map(p=>reversalCard(p,'short')).join('');
+    html += `</div>`;
+  }
+  if(json.note){
+    html += `<div class="footer-note">${json.note}</div>`;
+  }
+  wrap.innerHTML = html;
+}
+
+async function fetchV2(){
+  const statusEl = document.getElementById('v2Status');
+  const wrap = document.getElementById('v2Results');
+  statusEl.textContent = '讀取中…';
+
+  const wantedDate = (state.v2Date||'').trim();
+  const primaryFile = wantedDate ? `data/v2_screener_${wantedDate}.json` : 'data/v2_screener.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/v2_screener.json'){
+        json = await tryFetch('data/v2_screener.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
+    const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
+    statusEl.textContent = `已讀取 ${json.trade_date||'?'} V2雷達結果，共檢查 ${json.checked_count||0} 檔，用了 ${json.history_days||0} 天歷史資料${fallbackNote}`;
+    renderV2Results(json);
+  }catch(e){
+    wrap.innerHTML = '';
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/v2_screener.json 會自動產生。';
+  }
+}
+
+function v2Card(pick, dir){
+  const isLong = dir==='long';
+  const c = computeCDP({prevClose:pick.prevClose, prevHigh:pick.prevHigh, prevLow:pick.prevLow});
+  const cdpHtml = c ? cdpZoneHtml(null, c) : '<div style="font-size:11px;color:var(--muted);">CDP資料不足</div>';
+  const pct = pick.pctToday;
+  const pctHtml = (pct!==null && pct!==undefined)
+    ? `<span style="font-size:13px;font-weight:700;color:${pct>=0?'var(--long)':'var(--short)'};">${pct>=0?'+':''}${pct.toFixed(2)}%</span>` : '';
+  const volZhang = pick.volToday ? Math.round(pick.volToday/1000) : null;
+  const volRatio = (pick.vol10avg && pick.volToday) ? (pick.volToday/pick.vol10avg).toFixed(2) : null;
+
+  const detailLines = [
+    `近20日累計 ${(pick.chg20!==null&&pick.chg20!==undefined)?(pick.chg20>=0?'+':'')+pick.chg20.toFixed(2)+'%':'—'}`,
+    `量能 ${volZhang?volZhang+'張':'—'} ｜ 10日均量倍數 ${volRatio?volRatio+'倍':'—'}`,
+    `5日均線 ${pick.ma5?pick.ma5.toFixed(2):'—'}（${isLong?'收盤已站回':'收盤已跌破'}）`,
+    `KD K值 今日 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ 昨日 ${pick.kYesterday!==null&&pick.kYesterday!==undefined?pick.kYesterday.toFixed(1):'—'}（${isLong?'開始向上':'開始向下'}）`,
+    `MACD柱狀圖 今日 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'} ｜ 昨日 ${pick.macdHistYesterday!==null&&pick.macdHistYesterday!==undefined?pick.macdHistYesterday.toFixed(2):'—'}（${isLong?'綠柱縮短':'紅柱縮短或翻綠'}）`,
+    `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
+  ];
+
+  return `
+    <div class="result-card ${isLong?'result-long':'result-short'}">
+      <div class="result-head">
+        <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
+        ${pctHtml}
+      </div>
+      <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
+      <div style="margin-top:4px;">${cdpHtml}</div>
+      <ul class="cond-list" style="margin-top:8px;">
+        ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
+      </ul>
+      <div class="plan-line">${isLong ? '9項條件全符合（V1五項+站回5MA+KD向上+MACD綠柱縮短）' : '8項條件全符合（V1四項+跌破5MA+KD向下+MACD紅柱縮短翻綠）'}</div>
+    </div>
+  `;
+}
+
+function renderV2Results(json){
+  const wrap = document.getElementById('v2Results');
+  const longList = json.long || [];
+  const shortList = json.short || [];
+
+  if(longList.length===0 && shortList.length===0){
+    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票符合V2雷達的條件（比STEP4多了KD/MACD，本來就會篩得更少），這是正常的。</div></div>`;
+    return;
+  }
+
+  let html = '';
+  if(longList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔）</div>`;
+    html += longList.map(p=>v2Card(p,'long')).join('');
+    html += `</div>`;
+  }
+  if(shortList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）</div>`;
+    html += shortList.map(p=>v2Card(p,'short')).join('');
     html += `</div>`;
   }
   if(json.note){
