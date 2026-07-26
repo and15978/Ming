@@ -263,6 +263,19 @@
     <div id="v2Status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
   </div>
 
+  <div class="autofetch-box" style="margin-top:10px;">
+    <div class="hint" style="margin-bottom:10px;">額外篩選（都不勾＝不影響上面讀出來的清單；勾了才會再篩掉不符合的）</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="filterBband" style="width:18px;height:18px;"> 收盤站上/跌破 BBAND 中軌（20日均線）
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="filterInstStreak" style="width:18px;height:18px;"> 外資或主力連續2日買超/賣超
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0;">
+      <input type="checkbox" id="filterNotLocked" style="width:18px;height:18px;"> 昨日不是漲停/跌停鎖死
+    </label>
+  </div>
+
   <div id="v2Results"></div>
 </div>
 
@@ -919,6 +932,8 @@ function renderReversalResults(json){
   wrap.innerHTML = html;
 }
 
+let lastV2Json = null;
+
 async function fetchV2(){
   const statusEl = document.getElementById('v2Status');
   const wrap = document.getElementById('v2Results');
@@ -946,10 +961,12 @@ async function fetchV2(){
         throw e;
       }
     }
+    lastV2Json = json;
     const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
     statusEl.textContent = `已讀取 ${json.trade_date||'?'} V2雷達結果，共檢查 ${json.checked_count||0} 檔，用了 ${json.history_days||0} 天歷史資料${fallbackNote}`;
     renderV2Results(json);
   }catch(e){
+    lastV2Json = null;
     wrap.innerHTML = '';
     statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/v2_screener.json 會自動產生。';
   }
@@ -972,6 +989,9 @@ function v2Card(pick, dir){
     `KD K值 今日 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ 昨日 ${pick.kYesterday!==null&&pick.kYesterday!==undefined?pick.kYesterday.toFixed(1):'—'}（${isLong?'開始向上':'開始向下'}）`,
     `MACD柱狀圖 今日 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'} ｜ 昨日 ${pick.macdHistYesterday!==null&&pick.macdHistYesterday!==undefined?pick.macdHistYesterday.toFixed(2):'—'}（${isLong?'綠柱縮短':'紅柱縮短或翻綠'}）`,
     `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
+    `BBAND中軌 ${pick.bbandMid!==null&&pick.bbandMid!==undefined?pick.bbandMid.toFixed(2):'—'}（${isLong?(pick.aboveBbandMid?'已站上':'尚未站上'):(pick.belowBbandMid?'已跌破':'尚未跌破')}）`,
+    `外資/主力 ${pick.instDataAvailable?(isLong?(pick.instStreakBuy?'連續2日買超':'非連續買超'):(pick.instStreakSell?'連續2日賣超':'非連續賣超')):'這天缺法人資料，無法判斷'}`,
+    `昨日鎖死 ${pick.notLimitLockedYesterday===null||pick.notLimitLockedYesterday===undefined?'—':(pick.notLimitLockedYesterday?'否（正常）':'是（漲跌停鎖死）')}`,
   ];
 
   return `
@@ -990,24 +1010,49 @@ function v2Card(pick, dir){
   `;
 }
 
+function passesExtraFilters(pick, dir){
+  const isLong = dir==='long';
+  if(document.getElementById('filterBband').checked){
+    const ok = isLong ? pick.aboveBbandMid : pick.belowBbandMid;
+    if(!ok) return false;
+  }
+  if(document.getElementById('filterInstStreak').checked){
+    if(!pick.instDataAvailable) return false; // 這天缺法人資料，勾了就不算數，不亂猜
+    const ok = isLong ? pick.instStreakBuy : pick.instStreakSell;
+    if(!ok) return false;
+  }
+  if(document.getElementById('filterNotLocked').checked){
+    if(pick.notLimitLockedYesterday===null || pick.notLimitLockedYesterday===undefined) return false;
+    if(!pick.notLimitLockedYesterday) return false;
+  }
+  return true;
+}
+
 function renderV2Results(json){
   const wrap = document.getElementById('v2Results');
-  const longList = json.long || [];
-  const shortList = json.short || [];
+  const longListAll = json.long || [];
+  const shortListAll = json.short || [];
+  const longList = longListAll.filter(p=>passesExtraFilters(p,'long'));
+  const shortList = shortListAll.filter(p=>passesExtraFilters(p,'short'));
+
+  const anyFilterOn = document.getElementById('filterBband').checked
+    || document.getElementById('filterInstStreak').checked
+    || document.getElementById('filterNotLocked').checked;
+  const filterNote = anyFilterOn ? `（額外篩選前原本做多${longListAll.length}檔、放空${shortListAll.length}檔）` : '';
 
   if(longList.length===0 && shortList.length===0){
-    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票符合V2雷達的條件（比STEP4多了KD/MACD，本來就會篩得更少），這是正常的。</div></div>`;
+    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票符合條件${filterNote}，這是正常的。</div></div>`;
     return;
   }
 
   let html = '';
   if(longList.length){
-    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔）</div>`;
+    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔）${filterNote}</div>`;
     html += longList.map(p=>v2Card(p,'long')).join('');
     html += `</div>`;
   }
   if(shortList.length){
-    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）</div>`;
+    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）${filterNote}</div>`;
     html += shortList.map(p=>v2Card(p,'short')).join('');
     html += `</div>`;
   }
@@ -1016,6 +1061,10 @@ function renderV2Results(json){
   }
   wrap.innerHTML = html;
 }
+
+document.getElementById('filterBband').addEventListener('change', ()=>{ if(lastV2Json) renderV2Results(lastV2Json); });
+document.getElementById('filterInstStreak').addEventListener('change', ()=>{ if(lastV2Json) renderV2Results(lastV2Json); });
+document.getElementById('filterNotLocked').addEventListener('change', ()=>{ if(lastV2Json) renderV2Results(lastV2Json); });
 
 function pctChangeOf(s){
   const close = parseFloat(s.ClosingPrice);
