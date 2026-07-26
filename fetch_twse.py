@@ -197,6 +197,7 @@ def _load_price_history(data_dir="data", lookback_days=25, min_days=6):
                 "low": _to_f(s.get("LowestPrice")),
                 "close": _to_f(s.get("ClosingPrice")),
                 "volume": _to_f(s.get("TradeVolume")),
+                "instNet": _to_f(s.get("TotalInstNet")),
                 "name": s.get("Name"),
             }
             history.setdefault(code, []).append(rec)
@@ -515,6 +516,25 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
             amplitude = (today["high"] - today["low"]) / prev_close * 100
         amp_ok = bool(amplitude is not None and amplitude > 6)
 
+        # ── 以下是可選的額外篩選條件，不影響上面主要5/9項AND邏輯，
+        # 只是多算好附在候選股資料裡，前端可以讓使用者勾選要不要再篩一次 ──
+        bband_mid = _sma(closes, 20, idx)  # 布林中軌通常是20日均線
+        above_bband_mid = bool(bband_mid and today["close"] > bband_mid)
+        below_bband_mid = bool(bband_mid and today["close"] < bband_mid)
+
+        inst_today = today.get("instNet")
+        inst_yday = series[idx - 1].get("instNet") if idx >= 1 else None
+        inst_data_available = bool(inst_today is not None and inst_yday is not None)
+        inst_streak_buy = bool(inst_data_available and inst_today > 0 and inst_yday > 0)
+        inst_streak_sell = bool(inst_data_available and inst_today < 0 and inst_yday < 0)
+
+        yday = series[idx - 1] if idx >= 1 else None
+        yday_limit_locked = False
+        if yday and yday["high"] is not None and yday["low"] is not None and yday["close"]:
+            yday_range_ratio = (yday["high"] - yday["low"]) / yday["close"]
+            yday_limit_locked = yday_range_ratio < 0.002  # 幾乎沒有振幅，當作鎖死判斷
+        not_limit_locked_yday = (not yday_limit_locked) if yday else None
+
         base = {
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
@@ -523,6 +543,10 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
             "ma5": ma5, "kToday": k_today, "kYesterday": k_yday,
             "macdHistToday": hist_today, "macdHistYesterday": hist_yday,
             "amplitude": amplitude, "historyDays": len(series),
+            "bbandMid": bband_mid, "aboveBbandMid": above_bband_mid, "belowBbandMid": below_bband_mid,
+            "instDataAvailable": inst_data_available,
+            "instStreakBuy": inst_streak_buy, "instStreakSell": inst_streak_sell,
+            "notLimitLockedYesterday": not_limit_locked_yday,
         }
 
         if cond1_long and vol_ok and red_k and low_support_ok and near_high_ok and above_ma5 and kd_up and macd_green_shrink and amp_ok:
