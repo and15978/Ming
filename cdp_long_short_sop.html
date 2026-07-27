@@ -279,6 +279,35 @@
   <div id="v2Results"></div>
 </div>
 
+<!-- STEP 6 -->
+<div class="section">
+  <div class="step-label">STEP 6 ・ V5 雷達（收盤後，BBAND+KD交叉版）</div>
+
+  <div class="autofetch-box">
+    <div class="hint">讀取 data/v5_screener.json。第一層必要條件（7項全符合）：做多＝收盤&gt;BBAND中軌、收盤&gt;5日均線、成交量&gt;10日均量×2、收盤&gt;今日最高價×98%、振幅&gt;6%、成交金額&gt;5億、KD黃金交叉；放空條件方向相反（收盤&lt;今日最低價×102%、KD死亡交叉）。跟STEP3/4/5是不同套邏輯，各有各的篩法。</div>
+    <label>要看哪一天收盤後算出來的結果</label>
+    <input type="date" id="v5Date">
+    <button class="btn btn-primary" onclick="fetchV5()" style="margin-top:10px;">讀取 V5 雷達結果</button>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
+    <div id="v5Status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+  </div>
+
+  <div class="autofetch-box" style="margin-top:10px;">
+    <div class="hint" style="margin-bottom:10px;">額外篩選（都不勾＝不影響上面讀出來的清單；勾了才會再篩掉不符合的）。KD黃金/死亡交叉已經是上面第一層的必要條件，這裡不用重複勾。</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="v5FilterMacd" style="width:18px;height:18px;"> MACD綠柱縮短或DIF上彎（放空看紅柱縮短或DIF下彎）
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="v5FilterVolUp" style="width:18px;height:18px;"> 今日成交量 &gt; 昨日成交量
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0;">
+      <input type="checkbox" id="v5FilterBreakout5" style="width:18px;height:18px;"> 今日突破近5日最高價（放空看跌破近5日最低價）
+    </label>
+  </div>
+
+  <div id="v5Results"></div>
+</div>
+
 <!-- REFERENCE CARDS -->
 <div class="ref-card">
   <div class="ref-title long">🐂 做多條件（至少符合 5 項才積極操作）</div>
@@ -340,6 +369,9 @@ function load(){
   if(!state.v2Date){
     state.v2Date = state.date;
   }
+  if(!state.v5Date){
+    state.v5Date = state.date;
+  }
   if(typeof state.groupDetailVisible !== 'boolean'){
     state.groupDetailVisible = false;
   }
@@ -364,6 +396,7 @@ function renderInputs(){
   document.getElementById('screenerDate').value = state.screenerDate;
   document.getElementById('reversalDate').value = state.reversalDate;
   document.getElementById('v2Date').value = state.v2Date;
+  document.getElementById('v5Date').value = state.v5Date;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
   document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
@@ -373,6 +406,7 @@ function renderInputs(){
   document.getElementById('screenerDate').oninput = e=>{ state.screenerDate=e.target.value; save(); };
   document.getElementById('reversalDate').oninput = e=>{ state.reversalDate=e.target.value; save(); };
   document.getElementById('v2Date').oninput = e=>{ state.v2Date=e.target.value; save(); };
+  document.getElementById('v5Date').oninput = e=>{ state.v5Date=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
@@ -1065,6 +1099,136 @@ function renderV2Results(json){
 document.getElementById('filterBband').addEventListener('change', ()=>{ if(lastV2Json) renderV2Results(lastV2Json); });
 document.getElementById('filterInstStreak').addEventListener('change', ()=>{ if(lastV2Json) renderV2Results(lastV2Json); });
 document.getElementById('filterNotLocked').addEventListener('change', ()=>{ if(lastV2Json) renderV2Results(lastV2Json); });
+
+let lastV5Json = null;
+
+async function fetchV5(){
+  const statusEl = document.getElementById('v5Status');
+  const wrap = document.getElementById('v5Results');
+  statusEl.textContent = '讀取中…';
+
+  const wantedDate = (state.v5Date||'').trim();
+  const primaryFile = wantedDate ? `data/v5_screener_${wantedDate}.json` : 'data/v5_screener.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/v5_screener.json'){
+        json = await tryFetch('data/v5_screener.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
+    lastV5Json = json;
+    const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
+    statusEl.textContent = `已讀取 ${json.trade_date||'?'} V5雷達結果，共檢查 ${json.checked_count||0} 檔，用了 ${json.history_days||0} 天歷史資料${fallbackNote}`;
+    renderV5Results(json);
+  }catch(e){
+    lastV5Json = null;
+    wrap.innerHTML = '';
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/v5_screener.json 會自動產生。';
+  }
+}
+
+function v5Card(pick, dir){
+  const isLong = dir==='long';
+  const c = computeCDP({prevClose:pick.prevClose, prevHigh:pick.prevHigh, prevLow:pick.prevLow});
+  const cdpHtml = c ? cdpZoneHtml(null, c) : '<div style="font-size:11px;color:var(--muted);">CDP資料不足</div>';
+  const pct = pick.pctToday;
+  const pctHtml = (pct!==null && pct!==undefined)
+    ? `<span style="font-size:13px;font-weight:700;color:${pct>=0?'var(--long)':'var(--short)'};">${pct>=0?'+':''}${pct.toFixed(2)}%</span>` : '';
+  const volZhang = pick.volToday ? Math.round(pick.volToday/1000) : null;
+  const volRatio = (pick.vol10avg && pick.volToday) ? (pick.volToday/pick.vol10avg).toFixed(2) : null;
+
+  const detailLines = [
+    `BBAND中軌 ${pick.bbandMid!==null&&pick.bbandMid!==undefined?pick.bbandMid.toFixed(2):'—'}（${isLong?'已站上':'已跌破'}） ｜ 5日均線 ${pick.ma5?pick.ma5.toFixed(2):'—'}（${isLong?'已站上':'已跌破'}）`,
+    `量能 ${volZhang?volZhang+'張':'—'} ｜ 10日均量倍數 ${volRatio?volRatio+'倍':'—'} ｜ 成交金額約 ${(pick.valueApprox/1e8).toFixed(1)}億`,
+    `KD K值 今日 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'}／D值 ${pick.dToday!==null&&pick.dToday!==undefined?pick.dToday.toFixed(1):'—'}（${isLong?'黃金交叉':'死亡交叉'}）`,
+    `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
+    `MACD ${isLong?(pick.macdBullOk?'綠柱縮短或DIF上彎':'尚未轉強'):(pick.macdBearOk?'紅柱縮短或DIF下彎':'尚未轉弱')}`,
+    `今日量${pick.volUpDod?'>':'≤'}昨日量`,
+    `近5日${isLong?'最高':'最低'} ${isLong?(pick.high5!==null&&pick.high5!==undefined?pick.high5.toFixed(2):'—'):(pick.low5!==null&&pick.low5!==undefined?pick.low5.toFixed(2):'—')}（${isLong?(pick.breakout5High?'已突破':'尚未突破'):(pick.breakout5Low?'已跌破':'尚未跌破')}）`,
+  ];
+
+  return `
+    <div class="result-card ${isLong?'result-long':'result-short'}">
+      <div class="result-head">
+        <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
+        ${pctHtml}
+      </div>
+      <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
+      <div style="margin-top:4px;">${cdpHtml}</div>
+      <ul class="cond-list" style="margin-top:8px;">
+        ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
+      </ul>
+      <div class="plan-line">${isLong ? '第一層7項全符合（BBAND/5MA站上、爆量、貼近高點、高振幅、KD黃金交叉）' : '第一層7項全符合（BBAND/5MA跌破、爆量、貼近低點、高振幅、KD死亡交叉）'}</div>
+    </div>
+  `;
+}
+
+function passesV5ExtraFilters(pick, dir){
+  const isLong = dir==='long';
+  if(document.getElementById('v5FilterMacd').checked){
+    const ok = isLong ? pick.macdBullOk : pick.macdBearOk;
+    if(!ok) return false;
+  }
+  if(document.getElementById('v5FilterVolUp').checked){
+    if(!pick.volUpDod) return false;
+  }
+  if(document.getElementById('v5FilterBreakout5').checked){
+    const ok = isLong ? pick.breakout5High : pick.breakout5Low;
+    if(!ok) return false;
+  }
+  return true;
+}
+
+function renderV5Results(json){
+  const wrap = document.getElementById('v5Results');
+  const longListAll = json.long || [];
+  const shortListAll = json.short || [];
+  const longList = longListAll.filter(p=>passesV5ExtraFilters(p,'long'));
+  const shortList = shortListAll.filter(p=>passesV5ExtraFilters(p,'short'));
+
+  const anyFilterOn = document.getElementById('v5FilterMacd').checked
+    || document.getElementById('v5FilterVolUp').checked
+    || document.getElementById('v5FilterBreakout5').checked;
+  const filterNote = anyFilterOn ? `（額外篩選前原本做多${longListAll.length}檔、放空${shortListAll.length}檔）` : '';
+
+  if(longList.length===0 && shortList.length===0){
+    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票符合條件${filterNote}，這是正常的，門檻不低。</div></div>`;
+    return;
+  }
+
+  let html = '';
+  if(longList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔）${filterNote}</div>`;
+    html += longList.map(p=>v5Card(p,'long')).join('');
+    html += `</div>`;
+  }
+  if(shortList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）${filterNote}</div>`;
+    html += shortList.map(p=>v5Card(p,'short')).join('');
+    html += `</div>`;
+  }
+  if(json.note){
+    html += `<div class="footer-note">${json.note}</div>`;
+  }
+  wrap.innerHTML = html;
+}
+
+document.getElementById('v5FilterMacd').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
+document.getElementById('v5FilterVolUp').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
+document.getElementById('v5FilterBreakout5').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
 
 function pctChangeOf(s){
   const close = parseFloat(s.ClosingPrice);
