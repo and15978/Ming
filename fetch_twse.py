@@ -567,6 +567,138 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
     }
 
 
+def compute_v5_screener(data_dir="data", lookback_days=60):
+    """
+    V5 隔日多空雷達（收盤後）第一層（必要條件，全部符合）：
+    做多：收盤>BBAND中軌、收盤>5日均線、成交量>10日均量×2、收盤>今日最高價×98%、
+          振幅>6%、成交金額>5億、KD黃金交叉
+    放空：收盤<BBAND中軌、收盤<5日均線、成交量>10日均量×2、收盤<今日最低價×102%、
+          振幅>6%、成交金額>5億、KD死亡交叉
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
+    if history is None:
+        return None
+
+    latest_date = dates_used[-1]
+    long_picks = []
+    short_picks = []
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        idx = len(series) - 1
+        if idx < 20:
+            continue
+
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        highs = [r["high"] for r in series]
+        lows = [r["low"] for r in series]
+        vols = [r["volume"] for r in series]
+        prev_close = series[idx - 1]["close"] if idx >= 1 else None
+
+        bband_mid = _sma(closes, 20, idx)
+        ma5 = _sma(closes, 5, idx)
+        above_bband = bool(bband_mid and today["close"] > bband_mid)
+        below_bband = bool(bband_mid and today["close"] < bband_mid)
+        above_ma5 = bool(ma5 and today["close"] > ma5)
+        below_ma5 = bool(ma5 and today["close"] < ma5)
+
+        vol10avg = _sma(vols, 10, idx - 1) if idx - 1 >= 9 else None
+        vol_ok = bool(vol10avg and today["volume"] and today["volume"] > vol10avg * 2)
+
+        near_high_ok = bool(today["high"] and today["close"] > today["high"] * 0.98)
+        near_low_ok = bool(today["low"] and today["close"] < today["low"] * 1.02)
+
+        amplitude = None
+        if today["high"] is not None and today["low"] is not None and prev_close:
+            amplitude = (today["high"] - today["low"]) / prev_close * 100
+        amp_ok = bool(amplitude is not None and amplitude > 6)
+
+        value_approx = (today["volume"] or 0) * (today["close"] or 0)
+        value_ok = value_approx > 500_000_000
+
+        k_series, d_series = _compute_kd(highs, lows, closes)
+        k_today, d_today = k_series[idx], d_series[idx]
+        k_yday, d_yday = (k_series[idx - 1], d_series[idx - 1]) if idx >= 1 else (None, None)
+        kd_ready = all(v is not None for v in [k_today, d_today, k_yday, d_yday])
+        kd_golden = bool(kd_ready and k_yday <= d_yday and k_today > d_today)
+        kd_death = bool(kd_ready and k_yday >= d_yday and k_today < d_today)
+
+        # ── 以下是可選的額外篩選條件，不影響上面第一層AND邏輯，
+        # 只是多算好附在候選股資料裡，前端讓使用者勾選要不要再篩一次 ──
+        macd_line, _, hist_series = _compute_macd(closes)
+        dif_today, dif_yday = macd_line[idx], (macd_line[idx - 1] if idx >= 1 else None)
+        hist_today, hist_yday = hist_series[idx], (hist_series[idx - 1] if idx >= 1 else None)
+        macd_ready = dif_today is not None and dif_yday is not None
+        dif_up = bool(macd_ready and dif_today > dif_yday)
+        dif_down = bool(macd_ready and dif_today < dif_yday)
+        green_shrink = bool(hist_today is not None and hist_yday is not None and hist_yday < 0 and hist_today > hist_yday)
+        red_shrink = bool(hist_today is not None and hist_yday is not None and hist_yday > 0 and hist_today < hist_yday)
+        macd_bull_ok = bool(green_shrink or dif_up)
+        macd_bear_ok = bool(red_shrink or dif_down)
+
+        vol_yday = series[idx - 1]["volume"] if idx >= 1 else None
+        vol_up_dod = bool(vol_yday and today["volume"] and today["volume"] > vol_yday)
+
+        prior5_highs = [r["high"] for r in series[max(0, idx - 5):idx] if r["high"] is not None]
+        prior5_lows = [r["low"] for r in series[max(0, idx - 5):idx] if r["low"] is not None]
+        high5 = max(prior5_highs) if len(prior5_highs) >= 5 else None
+        low5 = min(prior5_lows) if len(prior5_lows) >= 5 else None
+        breakout5_high = bool(high5 is not None and today["close"] > high5)
+        breakout5_low = bool(low5 is not None and today["close"] < low5)
+
+        base = {
+            "code": code, "name": today.get("name"),
+            "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
+            "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
+            "bbandMid": bband_mid, "ma5": ma5,
+            "vol10avg": vol10avg, "volToday": today["volume"], "valueApprox": value_approx,
+            "amplitude": amplitude,
+            "kToday": k_today, "dToday": d_today, "kYesterday": k_yday, "dYesterday": d_yday,
+            "historyDays": len(series),
+            "macdBullOk": macd_bull_ok, "macdBearOk": macd_bear_ok,
+            "volUpDod": vol_up_dod,
+            "high5": high5, "low5": low5,
+            "breakout5High": breakout5_high, "breakout5Low": breakout5_low,
+        }
+
+        if above_bband and above_ma5 and vol_ok and near_high_ok and amp_ok and value_ok and kd_golden:
+            long_picks.append(base)
+        if below_bband and below_ma5 and vol_ok and near_low_ok and amp_ok and value_ok and kd_death:
+            short_picks.append(base)
+
+    long_picks.sort(key=lambda x: (x["volToday"] or 0) / (x["vol10avg"] or 1), reverse=True)
+    short_picks.sort(key=lambda x: (x["volToday"] or 0) / (x["vol10avg"] or 1), reverse=True)
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "checked_count": len(history),
+        "long": long_picks,
+        "short": short_picks,
+        "note": "V5第一層必要條件（7項全符合）：BBAND中軌位置、5日均線位置、10日均量2倍爆量、收盤貼近當日高/低、振幅>6%、成交金額>5億、KD黃金/死亡交叉。",
+    }
+
+
+def save_v5_screener(data_dir="data"):
+    """把V5雷達結果存成 data/v5_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
+    try:
+        result = compute_v5_screener(data_dir=data_dir)
+        if result is None:
+            return
+        out_path = os.path.join(data_dir, "v5_screener.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"v5_screener_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[V5雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+    except Exception as e:
+        print(f"[V5雷達] 計算失敗（{e}），略過（不影響個股資料）")
+
+
 def save_v2_screener(data_dir="data"):
     """把V2雷達結果存成 data/v2_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
     try:
@@ -941,6 +1073,7 @@ def main():
         save_screener()
         save_reversal_screener()
         save_v2_screener()
+        save_v5_screener()
         return
 
     # 排程執行（不帶參數）：
@@ -967,6 +1100,7 @@ def main():
     save_screener()
     save_reversal_screener()
     save_v2_screener()
+    save_v5_screener()
 
 
 if __name__ == "__main__":
