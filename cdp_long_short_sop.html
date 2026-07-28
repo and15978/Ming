@@ -216,6 +216,11 @@
   <input type="text" id="strongGroups" placeholder="族群1, 族群2, 族群3">
   <label>前三弱族群（逗號分隔，會依此判斷放空的「同族群最弱」）</label>
   <input type="text" id="weakGroups" placeholder="族群1, 族群2, 族群3">
+
+  <div class="autofetch-box" style="margin-top:14px;">
+    <div class="hint">族群資金流向統計（嚴格版）：跟上面「資金輪動雷達」不同套邏輯——先逐檔個股檢查8項條件（成交值、量能、均線多空排列、收盤強弱位置、5日/10日漲跌幅），再依族群統計有幾檔過關。同族群3檔以上算強勢/弱勢族群，5檔以上算主流族群/資金持續流出族群。跟上面按同一顆「讀取資料」按鈕一起出來。</div>
+    <div id="groupMomentumInfo" style="font-size:12.5px;color:var(--muted);line-height:1.8;margin-top:10px;">按上面「讀取資料，計算資金輪動」就會一起算出來。</div>
+  </div>
 </div>
 
 <!-- STEP 3 -->
@@ -525,10 +530,74 @@ async function fetchGroupData(){
     computeGroupRanking();
     const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
     statusEl.textContent = `已讀取 ${groupDataMeta.trade_date||'?'} 收盤資料，共 ${groupRawStocks.length} 檔${fallbackNote}`;
+    fetchGroupMomentum(wantedDate);
   }catch(e){
     groupRawStocks = [];
     statusEl.textContent = '讀取失敗：'+e.message+'。請確認這支 HTML 已經放進你的 GitHub Pages repo（跟 data/ 同一個網站）。';
   }
+}
+
+async function fetchGroupMomentum(wantedDate){
+  const el = document.getElementById('groupMomentumInfo');
+  el.textContent = '讀取中…';
+  const primaryFile = wantedDate ? `data/group_momentum_${wantedDate}.json` : 'data/group_momentum.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/group_momentum.json'){
+        json = await tryFetch('data/group_momentum.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
+    renderGroupMomentum(json, usedFallback ? wantedDate : null);
+  }catch(e){
+    el.textContent = '這個統計還沒有資料（'+e.message+'），要確認 fetch_twse.py 已更新並跑過，data/group_momentum.json 會自動產生。';
+  }
+}
+
+function tierLabel(tier){
+  if(tier==='mainstream') return {emoji:'🔥', text:'主流族群'};
+  if(tier==='confirmed') return {emoji:'🔻', text:'強弱族群'};
+  return {emoji:'—', text:'觀察名單'};
+}
+
+function renderGroupMomentum(json, fallbackDate){
+  const el = document.getElementById('groupMomentumInfo');
+  const fallbackNote = fallbackDate ? `（找不到 ${fallbackDate} 的存檔，已改讀最新一筆）` : '';
+  const header = `<div style="color:var(--muted);margin-bottom:8px;">資料日期：${json.trade_date||'?'} ・ 最強條件符合 ${json.strongCount||0} 檔、最弱條件符合 ${json.weakCount||0} 檔${fallbackNote}</div>`;
+
+  function table(rows, colorVar){
+    if(!rows || rows.length===0) return `<div style="color:var(--muted);font-size:12px;margin:6px 0 14px;">沒有族群符合3檔以上的門檻。</div>`;
+    const lines = rows.map((r,i)=>{
+      const tier = tierLabel(r.tier);
+      return `<div class="group-row">
+        <div class="group-row-top">
+          <span class="group-name">${i+1}. ${r.industry}</span>
+          <span class="group-score" style="color:${colorVar};">${tier.emoji} ${r.count}檔</span>
+        </div>
+        <div class="group-detail">5日均${r.avgChg5>=0?'+':''}${r.avgChg5.toFixed(1)}% ｜ 10日均${r.avgChg10>=0?'+':''}${r.avgChg10.toFixed(1)}% ｜ ${tier.text}</div>
+      </div>`;
+    }).join('');
+    return lines;
+  }
+
+  el.innerHTML = header
+    + `<div style="color:var(--long);font-weight:700;margin:6px 0 2px;">🟢 最強族群排名</div>`
+    + table(json.strongGroups, 'var(--long)')
+    + `<div style="color:var(--short);font-weight:700;margin:12px 0 2px;">🔴 最弱族群排名</div>`
+    + table(json.weakGroups, 'var(--short)');
 }
 
 function computeGroupRanking(){
