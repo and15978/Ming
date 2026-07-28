@@ -304,11 +304,15 @@ def compute_screener(data_dir="data", lookback_days=25):
     }
 
 
-def compute_reversal_screener(data_dir="data", lookback_days=25):
+def compute_reversal_screener(data_dir="data", lookback_days=60):
     """
     隔日做多/放空反轉雷達（收盤後）：找超跌/超漲後帶量反轉的股票。
     做多：近20日跌幅>20% 或 近10日跌幅>15%（符合任一即可）＋爆量＋收盤明顯高於當日低點＋收紅K＋高振幅
     放空：近20日漲幅>20% 或 近10日漲幅>15%（符合任一即可）＋爆量＋收盤明顯低於當日高點＋收黑K＋高振幅
+
+    另外附帶KD/MACD當「動能確認」參考，不放進主要AND邏輯（怕篩得太少），
+    只用來標警示：如果價格位置符合條件、但KD/MACD根本沒同步轉弱，代表動能還很強，
+    放空容易軋空、做多可能還沒止跌，前端會顯示警示提醒。
     """
     history, dates_used = _load_price_history(data_dir, lookback_days, min_days=11)
     if history is None:
@@ -327,6 +331,8 @@ def compute_reversal_screener(data_dir="data", lookback_days=25):
             continue  # 至少要有近10日資料
         today = series[idx]
         closes = [r["close"] for r in series]
+        highs = [r["high"] for r in series]
+        lows = [r["low"] for r in series]
         vols = [r["volume"] for r in series]
         prev_close = series[idx - 1]["close"] if idx >= 1 else None
 
@@ -354,6 +360,23 @@ def compute_reversal_screener(data_dir="data", lookback_days=25):
             amplitude = (today["high"] - today["low"]) / prev_close * 100
         amp_ok = bool(amplitude is not None and amplitude > 6)
 
+        # ── 動能確認（僅供警示，不影響上面主要AND邏輯）──
+        k_series, d_series = _compute_kd(highs, lows, closes)
+        k_today, d_today = k_series[idx], d_series[idx]
+        kd_ready = bool(k_today is not None and d_today is not None)
+        # 放空但KD還在死亡交叉之前（K還在D上面）＝動能還沒轉弱，軋空風險
+        short_squeeze_warning = bool(kd_ready and k_today >= d_today)
+        # 做多但KD還在黃金交叉之前（K還在D下面）＝還沒止跌，續跌風險
+        long_keepfall_warning = bool(kd_ready and k_today <= d_today)
+
+        _, _, hist_series = _compute_macd(closes)
+        macd_hist_today = hist_series[idx]
+        macd_ready = macd_hist_today is not None
+        # 放空但MACD柱狀圖還是紅的（正值）＝多方力道還沒消退
+        short_macd_warning = bool(macd_ready and macd_hist_today > 0)
+        # 做多但MACD柱狀圖還是綠的（負值）＝空方力道還沒消退
+        long_macd_warning = bool(macd_ready and macd_hist_today < 0)
+
         base = {
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
@@ -362,6 +385,9 @@ def compute_reversal_screener(data_dir="data", lookback_days=25):
             "chg20": chg20, "chg10": chg10,
             "vol5avg": vol5avg, "volToday": today["volume"],
             "amplitude": amplitude, "historyDays": len(series),
+            "kToday": k_today, "dToday": d_today, "macdHistToday": macd_hist_today,
+            "shortSqueezeWarning": short_squeeze_warning, "shortMacdWarning": short_macd_warning,
+            "longKeepfallWarning": long_keepfall_warning, "longMacdWarning": long_macd_warning,
         }
 
         if cond1_long and vol_ok and long_close_strong and red_k and amp_ok:
