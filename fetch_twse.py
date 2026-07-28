@@ -115,6 +115,138 @@ def fetch_taiex_today_hl(date_str):
     return None
 
 
+def compute_group_momentum(data_dir="data", lookback_days=25):
+    """
+    最強族群/最弱族群 選股條件與統計（收盤後，逐檔個股先篩選，再依族群統計符合檔數）。
+
+    每檔股票先檢查（1~8項全部符合才算數）：
+    最強：成交值>3億、成交量>5日均量×2、收盤>5日均線、收盤>10日均線、
+          5日均線>10日均線、收盤>=今日最高價×98%、近5日漲幅>8%、近10日漲幅>15%
+    最弱：方向相反（收盤<5MA<10MA、收盤<=今日最低價×102%、近5日跌幅>8%、近10日跌幅>15%）
+    加分項（不影響是否入選，只是額外標記）：近10日內創20日新高/新低
+
+    再依 data/industry_map.json 把過關的股票分族群，統計每個族群有幾檔符合：
+    3檔以上 → 強勢/弱勢族群；5檔以上 → 主流族群/資金持續流出族群
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=11)
+    if history is None:
+        return None
+    industry_map = _load_industry_map(data_dir)
+    if not industry_map:
+        print("[族群資金流向] 找不到 data/industry_map.json，略過")
+        return None
+
+    latest_date = dates_used[-1]
+    strong_stocks = []  # [{code,name,industry,chg5,chg10,newHigh20}]
+    weak_stocks = []
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        industry = industry_map.get(code)
+        if not industry:
+            continue
+        idx = len(series) - 1
+        if idx < 10:
+            continue
+
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        vols = [r["volume"] for r in series]
+
+        value_approx = (today["volume"] or 0) * (today["close"] or 0)
+        value_ok = value_approx > 300_000_000
+
+        vol5avg = _sma(vols, 5, idx - 1) if idx - 1 >= 4 else None
+        vol_ok = bool(vol5avg and today["volume"] and today["volume"] > vol5avg * 2)
+
+        ma5 = _sma(closes, 5, idx)
+        ma10 = _sma(closes, 10, idx)
+        above_ma5 = bool(ma5 and today["close"] > ma5)
+        below_ma5 = bool(ma5 and today["close"] < ma5)
+        above_ma10 = bool(ma10 and today["close"] > ma10)
+        below_ma10 = bool(ma10 and today["close"] < ma10)
+        bull_align = bool(ma5 and ma10 and ma5 > ma10)
+        bear_align = bool(ma5 and ma10 and ma5 < ma10)
+
+        strong_close = bool(today["high"] and today["close"] >= today["high"] * 0.98)
+        weak_close = bool(today["low"] and today["close"] <= today["low"] * 1.02)
+
+        close5ago = series[idx - 5]["close"]
+        chg5 = ((today["close"] - close5ago) / close5ago * 100) if close5ago else None
+        close10ago = series[idx - 10]["close"]
+        chg10 = ((today["close"] - close10ago) / close10ago * 100) if close10ago else None
+        chg5_strong = bool(chg5 is not None and chg5 > 8)
+        chg5_weak = bool(chg5 is not None and chg5 < -8)
+        chg10_strong = bool(chg10 is not None and chg10 > 15)
+        chg10_weak = bool(chg10 is not None and chg10 < -15)
+
+        new_high20 = False
+        new_low20 = False
+        if idx >= 20:
+            prior20_highs = [r["high"] for r in series[idx - 20:idx] if r["high"] is not None]
+            prior20_lows = [r["low"] for r in series[idx - 20:idx] if r["low"] is not None]
+            if prior20_highs:
+                new_high20 = today["close"] > max(prior20_highs)
+            if prior20_lows:
+                new_low20 = today["close"] < min(prior20_lows)
+
+        is_strong = value_ok and vol_ok and above_ma5 and above_ma10 and bull_align and strong_close and chg5_strong and chg10_strong
+        is_weak = value_ok and vol_ok and below_ma5 and below_ma10 and bear_align and weak_close and chg5_weak and chg10_weak
+
+        if is_strong:
+            strong_stocks.append({"code": code, "name": today.get("name"), "industry": industry, "chg5": chg5, "chg10": chg10, "newHigh20": new_high20})
+        if is_weak:
+            weak_stocks.append({"code": code, "name": today.get("name"), "industry": industry, "chg5": chg5, "chg10": chg10, "newLow20": new_low20})
+
+    def aggregate(stocks, chg5_key="chg5", chg10_key="chg10"):
+        groups = {}
+        for s in stocks:
+            groups.setdefault(s["industry"], []).append(s)
+        rows = []
+        for industry, items in groups.items():
+            count = len(items)
+            avg5 = sum(x["chg5"] for x in items if x["chg5"] is not None) / count
+            avg10 = sum(x["chg10"] for x in items if x["chg10"] is not None) / count
+            if count >= 5:
+                tier = "mainstream"
+            elif count >= 3:
+                tier = "confirmed"
+            else:
+                tier = "watch"
+            rows.append({"industry": industry, "count": count, "avgChg5": avg5, "avgChg10": avg10, "tier": tier, "stocks": items})
+        rows.sort(key=lambda r: (r["count"], abs(r["avgChg10"])), reverse=True)
+        return rows
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "strongCount": len(strong_stocks),
+        "weakCount": len(weak_stocks),
+        "strongGroups": aggregate(strong_stocks),
+        "weakGroups": aggregate(weak_stocks),
+        "note": "個股先逐檔篩選（成交值/量能/均線排列/收盤強弱位置/5日與10日漲跌幅全部符合），再依族群統計符合檔數；3檔以上算強勢/弱勢族群，5檔以上算主流族群/資金持續流出族群。",
+    }
+
+
+def save_group_momentum(data_dir="data"):
+    """把族群資金流向統計存成 data/group_momentum.json 與帶日期快照，失敗不影響其他資料抓取。"""
+    try:
+        result = compute_group_momentum(data_dir=data_dir)
+        if result is None:
+            return
+        out_path = os.path.join(data_dir, "group_momentum.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"group_momentum_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[族群資金流向] 已寫入 {out_path} 與 {dated_path}，最強族群符合股 {result['strongCount']} 檔，最弱族群符合股 {result['weakCount']} 檔")
+    except Exception as e:
+        print(f"[族群資金流向] 計算失敗（{e}），略過（不影響個股資料）")
+
+
 def save_market_history(date_iso, data_dir="data"):
     """把大盤指數歷史存成 data/market.json，失敗不影響個股資料抓取。"""
     try:
@@ -159,6 +291,17 @@ def _sma(vals, n, end_idx):
     if any(v is None for v in window):
         return None
     return sum(window) / n
+
+
+def _load_industry_map(data_dir="data"):
+    """讀取 fetch_industry.py 產生的 data/industry_map.json，回傳 {code: industry}。找不到就回傳空dict。"""
+    path = os.path.join(data_dir, "industry_map.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return {code: info.get("industry") for code, info in raw.items() if info.get("industry")}
+    except Exception:
+        return {}
 
 
 def _load_price_history(data_dir="data", lookback_days=25, min_days=6):
@@ -1096,6 +1239,7 @@ def main():
         merge_extra_data(stocks, date_iso)
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
         save_market_history(date_iso)
+        save_group_momentum()
         save_screener()
         save_reversal_screener()
         save_v2_screener()
@@ -1123,6 +1267,7 @@ def main():
     merge_extra_data(stocks, date_iso)
     save(stocks, date_iso, source, update_latest=True)
     save_market_history(date_iso)
+    save_group_momentum()
     save_screener()
     save_reversal_screener()
     save_v2_screener()
