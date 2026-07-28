@@ -921,7 +921,22 @@ function reversalCard(pick, dir){
     `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
     isLong ? `收盤 ${pick.prevClose.toFixed(2)} 明顯高於當日低點 ${pick.prevLow?pick.prevLow.toFixed(2):'—'}（長下影，買盤回升）`
            : `收盤 ${pick.prevClose.toFixed(2)} 明顯低於當日高點 ${pick.prevHigh?pick.prevHigh.toFixed(2):'—'}（長上影，賣壓轉強）`,
+    `KD K值 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ D值 ${pick.dToday!==null&&pick.dToday!==undefined?pick.dToday.toFixed(1):'—'} ｜ MACD柱狀圖 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'}`,
   ];
+
+  let warningHtml = '';
+  if(isLong && (pick.longKeepfallWarning || pick.longMacdWarning)){
+    const reasons = [];
+    if(pick.longKeepfallWarning) reasons.push('KD還沒黃金交叉');
+    if(pick.longMacdWarning) reasons.push('MACD柱狀圖還是綠的');
+    warningHtml = `<div class="warn-line" style="margin-top:8px;">⚠ 動能未同步轉強（${reasons.join('、')}），價格位置符合但可能還沒止跌，別搶進場</div>`;
+  }
+  if(!isLong && (pick.shortSqueezeWarning || pick.shortMacdWarning)){
+    const reasons = [];
+    if(pick.shortSqueezeWarning) reasons.push('KD還沒死亡交叉');
+    if(pick.shortMacdWarning) reasons.push('MACD柱狀圖還是紅的');
+    warningHtml = `<div class="warn-line" style="margin-top:8px;">⚠ 動能未同步轉弱（${reasons.join('、')}），小心軋空，建議等訊號更明確再進場</div>`;
+  }
 
   return `
     <div class="result-card ${isLong?'result-long':'result-short'}">
@@ -934,6 +949,7 @@ function reversalCard(pick, dir){
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
+      ${warningHtml}
       <div class="plan-line">${isLong ? '超跌反彈：等待站上關鍵價再進場，別搶最低點' : '超漲拉回：等待跌破關鍵價再進場，別搶最高點'}</div>
     </div>
   `;
