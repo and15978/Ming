@@ -419,6 +419,8 @@ def compute_screener(data_dir="data", lookback_days=25):
         exclude_long = bool((pct_today is not None and pct_today >= 9.5) or (chg3 is not None and chg3 > 20))
         exclude_short = bool((pct_today is not None and pct_today <= -9.5) or (chg3 is not None and chg3 < -20))
 
+        support = _find_support_level(series, idx)
+
         base = {
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
@@ -427,6 +429,9 @@ def compute_screener(data_dir="data", lookback_days=25):
             "volToday": today["volume"], "valueApprox": value_approx,
             "high20": high20, "low20": low20, "close10max": close10max, "close10min": close10min,
             "chg3": chg3, "historyDays": len(series),
+            "supportLevel": support["level"] if support else None,
+            "supportTouches": support["touches"] if support else None,
+            "supportBroken": support["broken"] if support else None,
         }
 
         if trend_long and k_long and vol_ok and value_ok and breakout_long and not exclude_long:
@@ -563,6 +568,8 @@ def compute_reversal_screener(data_dir="data", lookback_days=65):
         if limit_up_count >= 2: severe_short_reasons.append(f"近10日漲停{limit_up_count}次")
         if k_high_stuck_count >= 5: severe_short_reasons.append(f"KD近10日有{k_high_stuck_count}天卡在80以上（高檔鈍化）")
 
+        support = _find_support_level(series, idx)
+
         base = {
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
@@ -576,6 +583,9 @@ def compute_reversal_screener(data_dir="data", lookback_days=65):
             "longKeepfallWarning": long_keepfall_warning, "longMacdWarning": long_macd_warning,
             "severeLongRisk": severe_long_risk, "severeLongReasons": severe_long_reasons,
             "severeShortRisk": severe_short_risk, "severeShortReasons": severe_short_reasons,
+            "supportLevel": support["level"] if support else None,
+            "supportTouches": support["touches"] if support else None,
+            "supportBroken": support["broken"] if support else None,
         }
 
         if cond1_long and vol_ok and long_close_strong and red_k and amp_ok:
@@ -633,6 +643,51 @@ def _compute_macd(closes, fast=12, slow=26, signal_span=9):
             signal[i] = sig_vals[j]
     hist = [(m - s) if (m is not None and s is not None) else None for m, s in zip(macd_line, signal)]
     return macd_line, signal, hist
+
+
+def _find_support_level(series, idx, lookback=20, tolerance=0.015):
+    """
+    找「近期低點聚類」支撐位：把 lookback 天內相近的低點（誤差 tolerance 內）
+    歸成同一群，同一群出現 2 次以上算「測試過」，且期間收盤沒有明顯跌破，
+    才算有效支撐。回傳離目前收盤最近、測試次數最多的那個支撐價位。
+    找不到就回傳 None。
+    """
+    start = max(0, idx - lookback)
+    window = series[start:idx + 1]
+    lows = [r["low"] for r in window if r["low"] is not None]
+    if len(lows) < 2:
+        return None
+
+    sorted_lows = sorted(lows)
+    clusters = []
+    current = [sorted_lows[0]]
+    for v in sorted_lows[1:]:
+        if v <= current[0] * (1 + tolerance):
+            current.append(v)
+        else:
+            clusters.append(current)
+            current = [v]
+    clusters.append(current)
+
+    current_close = window[-1]["close"]
+    candidates = []
+    for c in clusters:
+        if len(c) < 2:
+            continue
+        level = sum(c) / len(c)
+        # 跌破判斷：期間有沒有收盤明顯低於這個支撐（給一點緩衝，不要太敏感）
+        broken = any(
+            r["close"] is not None and r["close"] < level * (1 - tolerance * 1.5)
+            for r in window
+        )
+        candidates.append({"level": level, "touches": len(c), "broken": broken})
+
+    if not candidates:
+        return None
+    valid = [c for c in candidates if not c["broken"]] or candidates
+    valid.sort(key=lambda v: (-v["touches"], abs((current_close or 0) - v["level"])))
+    best = valid[0]
+    return {"level": round(best["level"], 2), "touches": best["touches"], "broken": best["broken"]}
 
 
 def _compute_kd(highs, lows, closes, n=9):
