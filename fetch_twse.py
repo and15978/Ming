@@ -447,7 +447,7 @@ def compute_screener(data_dir="data", lookback_days=25):
     }
 
 
-def compute_reversal_screener(data_dir="data", lookback_days=60):
+def compute_reversal_screener(data_dir="data", lookback_days=65):
     """
     隔日做多/放空反轉雷達（收盤後）：找超跌/超漲後帶量反轉的股票。
     做多：近20日跌幅>20% 或 近10日跌幅>15%（符合任一即可）＋爆量＋收盤明顯高於當日低點＋收紅K＋高振幅
@@ -520,17 +520,62 @@ def compute_reversal_screener(data_dir="data", lookback_days=60):
         # 做多但MACD柱狀圖還是綠的（負值）＝空方力道還沒消退
         long_macd_warning = bool(macd_ready and macd_hist_today < 0)
 
+        # ── 嚴重風險檢查（比上面的動能警示更嚴重）──
+        # 這是為了抓「結構性重挫」的股票：不是短期超跌，是長期崩跌中的技術性反彈，
+        # 這種股票的KD/MACD訊號常常失真，一根反彈就轉正，但不代表主跌段結束。
+        close60ago = series[idx - 60]["close"] if idx >= 60 else None
+        chg60 = ((today["close"] - close60ago) / close60ago * 100) if close60ago else None
+        deep_crash = bool(chg60 is not None and chg60 <= -40)
+        deep_surge = bool(chg60 is not None and chg60 >= 100)
+
+        window10 = series[max(0, idx - 9):idx + 1]
+        limit_down_count = 0
+        limit_up_count = 0
+        for j in range(max(1, idx - 9), idx + 1):
+            pc = series[j - 1]["close"]
+            cc = series[j]["close"]
+            if pc:
+                daily_pct = (cc - pc) / pc * 100
+                if daily_pct <= -9.5:
+                    limit_down_count += 1
+                elif daily_pct >= 9.5:
+                    limit_up_count += 1
+
+        k_low_stuck_count = 0
+        k_high_stuck_count = 0
+        for j in range(max(0, idx - 9), idx + 1):
+            kv = k_series[j]
+            if kv is None:
+                continue
+            if kv < 20:
+                k_low_stuck_count += 1
+            elif kv > 80:
+                k_high_stuck_count += 1
+
+        severe_long_risk = bool(deep_crash or limit_down_count >= 2 or k_low_stuck_count >= 5)
+        severe_short_risk = bool(deep_surge or limit_up_count >= 2 or k_high_stuck_count >= 5)
+        severe_long_reasons = []
+        if deep_crash: severe_long_reasons.append(f"近60日累計{chg60:.0f}%，結構性重挫")
+        if limit_down_count >= 2: severe_long_reasons.append(f"近10日跌停{limit_down_count}次")
+        if k_low_stuck_count >= 5: severe_long_reasons.append(f"KD近10日有{k_low_stuck_count}天卡在20以下（低檔鈍化）")
+        severe_short_reasons = []
+        if deep_surge: severe_short_reasons.append(f"近60日累計+{chg60:.0f}%，長期強勢")
+        if limit_up_count >= 2: severe_short_reasons.append(f"近10日漲停{limit_up_count}次")
+        if k_high_stuck_count >= 5: severe_short_reasons.append(f"KD近10日有{k_high_stuck_count}天卡在80以上（高檔鈍化）")
+
         base = {
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
-            "chg20": chg20, "chg10": chg10,
+            "chg20": chg20, "chg10": chg10, "chg60": chg60,
             "vol5avg": vol5avg, "volToday": today["volume"],
             "amplitude": amplitude, "historyDays": len(series),
             "kToday": k_today, "dToday": d_today, "macdHistToday": macd_hist_today,
             "shortSqueezeWarning": short_squeeze_warning, "shortMacdWarning": short_macd_warning,
             "longKeepfallWarning": long_keepfall_warning, "longMacdWarning": long_macd_warning,
+            "severeLongRisk": severe_long_risk, "severeLongReasons": severe_long_reasons,
+            "severeShortRisk": severe_short_risk, "severeShortReasons": severe_short_reasons,
         }
 
         if cond1_long and vol_ok and long_close_strong and red_k and amp_ok:
