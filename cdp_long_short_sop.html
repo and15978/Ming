@@ -877,6 +877,12 @@ async function fetchScreener(){
   }
 }
 
+function supportLineText(pick){
+  if(pick.supportLevel===null || pick.supportLevel===undefined) return `近期支撐：資料不足，無法判斷`;
+  const status = pick.supportBroken ? '，測試後曾經跌破，參考性較低' : '，每次測試都撐住';
+  return `近期支撐 ${pick.supportLevel.toFixed(2)}（近20日內測試${pick.supportTouches}次${status}）`;
+}
+
 function screenerCard(pick, dir){
   const isLong = dir==='long';
   const c = computeCDP({prevClose:pick.prevClose, prevHigh:pick.prevHigh, prevLow:pick.prevLow});
@@ -896,6 +902,7 @@ function screenerCard(pick, dir){
   ];
   detailLines.push(`量能 ${volZhang?volZhang+'張':'—'} ｜ 5日均量倍數 ${volRatio?volRatio+'倍':'—'} ｜ 成交金額約 ${(pick.valueApprox/1e8).toFixed(1)}億`);
   detailLines.push(`3日累計漲跌 ${(pick.chg3!==null&&pick.chg3!==undefined)?(pick.chg3>=0?'+':'')+pick.chg3.toFixed(2)+'%':'—'}`);
+  detailLines.push(supportLineText(pick));
 
   return `
     <div class="result-card ${isLong?'result-long':'result-short'}">
@@ -993,6 +1000,7 @@ function reversalCard(pick, dir){
     isLong ? `收盤 ${pick.prevClose.toFixed(2)} 明顯高於當日低點 ${pick.prevLow?pick.prevLow.toFixed(2):'—'}（長下影，買盤回升）`
            : `收盤 ${pick.prevClose.toFixed(2)} 明顯低於當日高點 ${pick.prevHigh?pick.prevHigh.toFixed(2):'—'}（長上影，賣壓轉強）`,
     `KD K值 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ D值 ${pick.dToday!==null&&pick.dToday!==undefined?pick.dToday.toFixed(1):'—'} ｜ MACD柱狀圖 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'}`,
+    supportLineText(pick),
   ];
 
   let warningHtml = '';
