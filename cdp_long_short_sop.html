@@ -582,12 +582,14 @@ function renderGroupMomentum(json, fallbackDate){
     if(!rows || rows.length===0) return `<div style="color:var(--muted);font-size:12px;margin:6px 0 14px;">沒有族群符合3檔以上的門檻。</div>`;
     const lines = rows.map((r,i)=>{
       const tier = tierLabel(r.tier);
+      const stockNames = (r.stocks||[]).map(s=>`${s.name||s.code}(${s.code})`).join('、');
       return `<div class="group-row">
         <div class="group-row-top">
           <span class="group-name">${i+1}. ${r.industry}</span>
           <span class="group-score" style="color:${colorVar};">${tier.emoji} ${r.count}檔</span>
         </div>
         <div class="group-detail">5日均${r.avgChg5>=0?'+':''}${r.avgChg5.toFixed(1)}% ｜ 10日均${r.avgChg10>=0?'+':''}${r.avgChg10.toFixed(1)}% ｜ ${tier.text}</div>
+        <div class="group-detail" style="color:var(--text);opacity:0.85;">個股：${stockNames||'—'}</div>
       </div>`;
     }).join('');
     return lines;
