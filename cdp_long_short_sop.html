@@ -985,7 +985,7 @@ function reversalCard(pick, dir){
   const volRatio = (pick.vol5avg && pick.volToday) ? (pick.volToday/pick.vol5avg).toFixed(2) : null;
 
   const detailLines = [
-    `近20日累計 ${(pick.chg20!==null&&pick.chg20!==undefined)?(pick.chg20>=0?'+':'')+pick.chg20.toFixed(2)+'%':'—'} ｜ 近10日累計 ${(pick.chg10!==null&&pick.chg10!==undefined)?(pick.chg10>=0?'+':'')+pick.chg10.toFixed(2)+'%':'—'}`,
+    `近20日累計 ${(pick.chg20!==null&&pick.chg20!==undefined)?(pick.chg20>=0?'+':'')+pick.chg20.toFixed(2)+'%':'—'} ｜ 近10日累計 ${(pick.chg10!==null&&pick.chg10!==undefined)?(pick.chg10>=0?'+':'')+pick.chg10.toFixed(2)+'%':'—'} ｜ 近60日累計 ${(pick.chg60!==null&&pick.chg60!==undefined)?(pick.chg60>=0?'+':'')+pick.chg60.toFixed(1)+'%':'—'}`,
     `量能 ${volZhang?volZhang+'張':'—'} ｜ 5日均量倍數 ${volRatio?volRatio+'倍':'—'}`,
     `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
     isLong ? `收盤 ${pick.prevClose.toFixed(2)} 明顯高於當日低點 ${pick.prevLow?pick.prevLow.toFixed(2):'—'}（長下影，買盤回升）`
@@ -1007,6 +1007,14 @@ function reversalCard(pick, dir){
     warningHtml = `<div class="warn-line" style="margin-top:8px;">⚠ 動能未同步轉弱（${reasons.join('、')}），小心軋空，建議等訊號更明確再進場</div>`;
   }
 
+  let severeHtml = '';
+  if(isLong && pick.severeLongRisk){
+    severeHtml = `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#3a0f14;border:1px solid var(--short);color:#ff8a95;font-size:12.5px;">🚨 嚴重風險：${(pick.severeLongReasons||[]).join('；')}。這可能是長期崩跌中的技術性反彈，不是真正的超跌反轉，訊號容易失真</div>`;
+  }
+  if(!isLong && pick.severeShortRisk){
+    severeHtml = `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#3a0f14;border:1px solid var(--short);color:#ff8a95;font-size:12.5px;">🚨 嚴重風險：${(pick.severeShortReasons||[]).join('；')}。長期強勢股放空風險極高，容易軋空到底</div>`;
+  }
+
   return `
     <div class="result-card ${isLong?'result-long':'result-short'}">
       <div class="result-head">
@@ -1018,6 +1026,7 @@ function reversalCard(pick, dir){
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
+      ${severeHtml}
       ${warningHtml}
       <div class="plan-line">${isLong ? '超跌反彈：等待站上關鍵價再進場，別搶最低點' : '超漲拉回：等待跌破關鍵價再進場，別搶最高點'}</div>
     </div>
