@@ -313,6 +313,71 @@
   <div id="v5Results"></div>
 </div>
 
+<!-- STEP 7 -->
+<div class="section">
+  <div class="step-label">STEP 7 ・ V4 隔日當沖策略（收盤後篩選 + 避開洗盤）</div>
+
+  <div class="autofetch-box">
+    <div class="hint">讀取 data/v4_screener.json。第1層核心條件全符合（收盤vs BBAND中軌/5MA、量能1.3倍、MACD柱狀圖增加、K棒顏色）＋第2層加分條件6項符合3項以上＋第3層避開洗盤（振幅過大/異常爆量/影線過長/近3日振幅過大/收盤卡中間，任一項觸發就直接排除）。</div>
+    <label>要看哪一天收盤後算出來的結果</label>
+    <input type="date" id="v4Date">
+    <button class="btn btn-primary" onclick="fetchV4()" style="margin-top:10px;">讀取 V4 策略結果</button>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">沒選日期，或該日期沒有存檔，會自動改讀最新一筆。</div>
+    <div id="v4Status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+  </div>
+
+  <div id="v4Results"></div>
+
+  <div class="ref-card" style="margin:14px 0 0;">
+    <div class="ref-title" style="color:var(--gold);">第4層 ・ 隔日開盤5分K確認（僅供參考，不參與篩選）</div>
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px;">這一層要靠明天開盤後的5分K盤中資料才能確認，收盤後篩選階段沒辦法算，符合3項以上才進場：</div>
+    <div class="grid2">
+      <div>
+        <div style="color:var(--long);font-weight:700;margin-bottom:4px;">做多確認（多頭）</div>
+        <ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--muted);line-height:1.8;">
+          <li>第一根5分鐘K棒收紅</li>
+          <li>成交量 &gt; 昨日同期</li>
+          <li>站上VWAP且不破</li>
+          <li>未跌破開盤價</li>
+          <li>第一根5分鐘低點不破</li>
+        </ol>
+      </div>
+      <div>
+        <div style="color:var(--short);font-weight:700;margin-bottom:4px;">做空確認（空頭）</div>
+        <ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--muted);line-height:1.8;">
+          <li>第一根5分鐘K棒收黑</li>
+          <li>成交量 &gt; 昨日同期</li>
+          <li>跌破VWAP且反彈站不上</li>
+          <li>未突破開盤價</li>
+          <li>第一根5分鐘高點不破</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <div class="ref-card">
+    <div class="ref-title" style="color:var(--gold);">進出場與停損停利建議（僅供參考）</div>
+    <div class="grid2">
+      <div>
+        <div style="color:var(--long);font-weight:700;margin-bottom:4px;">做多策略</div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.8;">進場：符合第4層確認條件後進場<br>停損：跌破VWAP或開盤價或第一根5分鐘低點<br>停利：1.5%~3% 或前高附近分批出場</div>
+      </div>
+      <div>
+        <div style="color:var(--short);font-weight:700;margin-bottom:4px;">放空策略</div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.8;">進場：符合第4層確認條件後進場<br>停損：站上VWAP或開盤價或第一根5分鐘高點<br>停利：1.5%~3% 或前低附近分批出場</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ref-card">
+    <div class="ref-title" style="color:var(--gold);">操作心法與注意事項</div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.9;">
+      嚴守條件，不猜頂／不追高／不殺低・避開洗盤股才有機會抓到趨勢股・嚴格執行停損，保護資金・每天只做符合條件的股票<br>
+      ⚠ 大盤若大跌或盤整，降低進場次數・高檔爆量股／小型股／飆股風險高・消息面突發，嚴格控制倉位・當沖操作，紀律與執行力最重要
+    </div>
+  </div>
+</div>
+
 <!-- REFERENCE CARDS -->
 <div class="ref-card">
   <div class="ref-title long">🐂 做多條件（至少符合 5 項才積極操作）</div>
@@ -377,6 +442,9 @@ function load(){
   if(!state.v5Date){
     state.v5Date = state.date;
   }
+  if(!state.v4Date){
+    state.v4Date = state.date;
+  }
   if(typeof state.groupDetailVisible !== 'boolean'){
     state.groupDetailVisible = false;
   }
@@ -402,6 +470,7 @@ function renderInputs(){
   document.getElementById('reversalDate').value = state.reversalDate;
   document.getElementById('v2Date').value = state.v2Date;
   document.getElementById('v5Date').value = state.v5Date;
+  document.getElementById('v4Date').value = state.v4Date;
   document.getElementById('strongGroups').value = state.strong;
   document.getElementById('weakGroups').value = state.weak;
   document.getElementById('marketVwap').value = state.marketVwap || 'neutral';
@@ -412,6 +481,7 @@ function renderInputs(){
   document.getElementById('reversalDate').oninput = e=>{ state.reversalDate=e.target.value; save(); };
   document.getElementById('v2Date').oninput = e=>{ state.v2Date=e.target.value; save(); };
   document.getElementById('v5Date').oninput = e=>{ state.v5Date=e.target.value; save(); };
+  document.getElementById('v4Date').oninput = e=>{ state.v4Date=e.target.value; save(); };
   document.getElementById('strongGroups').oninput = e=>{ state.strong=e.target.value; save(); };
   document.getElementById('weakGroups').oninput = e=>{ state.weak=e.target.value; save(); };
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
@@ -1333,6 +1403,104 @@ function renderV5Results(json){
 document.getElementById('v5FilterMacd').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
 document.getElementById('v5FilterVolUp').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
 document.getElementById('v5FilterBreakout5').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
+
+async function fetchV4(){
+  const statusEl = document.getElementById('v4Status');
+  const wrap = document.getElementById('v4Results');
+  statusEl.textContent = '讀取中…';
+
+  const wantedDate = (state.v4Date||'').trim();
+  const primaryFile = wantedDate ? `data/v4_screener_${wantedDate}.json` : 'data/v4_screener.json';
+
+  async function tryFetch(path){
+    const resp = await fetch(path, {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    return resp.json();
+  }
+
+  try{
+    let json;
+    let usedFallback = false;
+    try{
+      json = await tryFetch(primaryFile);
+    }catch(e){
+      if(primaryFile !== 'data/v4_screener.json'){
+        json = await tryFetch('data/v4_screener.json');
+        usedFallback = true;
+      }else{
+        throw e;
+      }
+    }
+    const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
+    statusEl.textContent = `已讀取 ${json.trade_date||'?'} V4策略結果，共檢查 ${json.checked_count||0} 檔，用了 ${json.history_days||0} 天歷史資料${fallbackNote}`;
+    renderV4Results(json);
+  }catch(e){
+    wrap.innerHTML = '';
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/v4_screener.json 會自動產生。';
+  }
+}
+
+function v4Card(pick, dir){
+  const isLong = dir==='long';
+  const c = computeCDP({prevClose:pick.prevClose, prevHigh:pick.prevHigh, prevLow:pick.prevLow});
+  const cdpHtml = c ? cdpZoneHtml(null, c) : '<div style="font-size:11px;color:var(--muted);">CDP資料不足</div>';
+  const pct = pick.pctToday;
+  const pctHtml = (pct!==null && pct!==undefined)
+    ? `<span style="font-size:13px;font-weight:700;color:${pct>=0?'var(--long)':'var(--short)'};">${pct>=0?'+':''}${pct.toFixed(2)}%</span>` : '';
+  const volZhang = pick.volToday ? Math.round(pick.volToday/1000) : null;
+  const volRatio = (pick.vol5avg && pick.volToday) ? (pick.volToday/pick.vol5avg).toFixed(2) : null;
+
+  const detailLines = [
+    `加分條件符合 ${pick.bonusCount}/6 項`,
+    `BBAND中軌 ${pick.bbandMid!==null&&pick.bbandMid!==undefined?pick.bbandMid.toFixed(2):'—'}（${isLong?'已站上':'已跌破'}） ｜ 5日均線 ${pick.ma5?pick.ma5.toFixed(2):'—'}`,
+    `量能 ${volZhang?volZhang+'張':'—'} ｜ 5日均量倍數 ${volRatio?volRatio+'倍':'—'}`,
+    `KD K值 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ D值 ${pick.dToday!==null&&pick.dToday!==undefined?pick.dToday.toFixed(1):'—'}`,
+    `MACD柱狀圖 今日 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'} ｜ 昨日 ${pick.macdHistYesterday!==null&&pick.macdHistYesterday!==undefined?pick.macdHistYesterday.toFixed(2):'—'}`,
+    `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
+  ];
+
+  return `
+    <div class="result-card ${isLong?'result-long':'result-short'}">
+      <div class="result-head">
+        <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
+        ${pctHtml}
+      </div>
+      <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
+      <div style="margin-top:4px;">${cdpHtml}</div>
+      <ul class="cond-list" style="margin-top:8px;">
+        ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
+      </ul>
+      <div class="plan-line">第1層核心條件全符合，第2層加分${pick.bonusCount}/6項，未觸發第3層避開洗盤條件。隔日仍需第4層5分K確認才進場（見下方參考）</div>
+    </div>
+  `;
+}
+
+function renderV4Results(json){
+  const wrap = document.getElementById('v4Results');
+  const longList = json.long || [];
+  const shortList = json.short || [];
+
+  if(longList.length===0 && shortList.length===0){
+    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票通過三層篩選，這是正常的，門檻不低。</div></div>`;
+    return;
+  }
+
+  let html = '';
+  if(longList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔）</div>`;
+    html += longList.map(p=>v4Card(p,'long')).join('');
+    html += `</div>`;
+  }
+  if(shortList.length){
+    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）</div>`;
+    html += shortList.map(p=>v4Card(p,'short')).join('');
+    html += `</div>`;
+  }
+  if(json.note){
+    html += `<div class="footer-note">${json.note}</div>`;
+  }
+  wrap.innerHTML = html;
+}
 
 function pctChangeOf(s){
   const close = parseFloat(s.ClosingPrice);
