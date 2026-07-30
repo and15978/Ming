@@ -1,0 +1,36 @@
+name: Intraday 5min Capture
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # 台北時間 08:56（UTC 00:56），平日觸發。
+    # 程式會自己等到09:00開盤，一路跑到13:35，中間不需要GitHub再次觸發。
+    - cron: '56 0 * * 1-5'
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330   # 給足5.5小時，避免中途被系統強制中斷
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run intraday_capture.py
+        run: python3 intraday_capture.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/intraday/
+          git diff --quiet --cached || git commit -m "auto: intraday 5min capture"
+          git pull --rebase
+          git push
