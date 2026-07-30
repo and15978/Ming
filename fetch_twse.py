@@ -964,8 +964,10 @@ def save_v5_screener(data_dir="data"):
         with open(dated_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False)
         print(f"[V5雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+        return result
     except Exception as e:
         print(f"[V5雷達] 計算失敗（{e}），略過（不影響個股資料）")
+        return None
 
 
 def save_v2_screener(data_dir="data"):
@@ -981,8 +983,10 @@ def save_v2_screener(data_dir="data"):
         with open(dated_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False)
         print(f"[V2雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+        return result
     except Exception as e:
         print(f"[V2雷達] 計算失敗（{e}），略過（不影響個股資料）")
+        return None
 
 
 def save_reversal_screener(data_dir="data"):
@@ -998,8 +1002,10 @@ def save_reversal_screener(data_dir="data"):
         with open(dated_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False)
         print(f"[反轉雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+        return result
     except Exception as e:
         print(f"[反轉雷達] 計算失敗（{e}），略過（不影響個股資料）")
+        return None
 
 
 def save_screener(data_dir="data"):
@@ -1017,8 +1023,37 @@ def save_screener(data_dir="data"):
         with open(dated_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False)
         print(f"[篩選雷達] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔（用了 {result['history_days']} 天歷史資料）")
+        return result
     except Exception as e:
         print(f"[篩選雷達] 計算失敗（{e}），略過（不影響個股資料）")
+        return None
+
+
+def save_watchlist(screener_results, data_dir="data", max_size=50):
+    """
+    把當天各雷達（STEP3/4/5/6）選出來的候選股代號聯集起來，存成
+    data/watchlist.json，供隔天開盤的即時5分K追蹤程式（intraday_capture.py）
+    知道要盯哪些股票，不用追全市場。
+    """
+    try:
+        codes = {}
+        for result in screener_results:
+            if not result:
+                continue
+            for side in ("long", "short"):
+                for item in result.get(side, []):
+                    code = item.get("code")
+                    name = item.get("name")
+                    if code and code not in codes:
+                        codes[code] = name
+
+        watchlist = [{"code": c, "name": n} for c, n in codes.items()][:max_size]
+        out_path = os.path.join(data_dir, "watchlist.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump({"generated_at": datetime.datetime.utcnow().isoformat() + "Z", "stocks": watchlist}, f, ensure_ascii=False)
+        print(f"[追蹤清單] 已寫入 {out_path}，共 {len(watchlist)} 檔（明天開盤會追蹤這些股票的5分K）")
+    except Exception as e:
+        print(f"[追蹤清單] 產生失敗（{e}），略過")
 
 
 def http_get_json(url):
@@ -1340,10 +1375,11 @@ def main():
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
         save_market_history(date_iso)
         save_group_momentum()
-        save_screener()
-        save_reversal_screener()
-        save_v2_screener()
-        save_v5_screener()
+        r3 = save_screener()
+        r4 = save_reversal_screener()
+        r5 = save_v2_screener()
+        r6 = save_v5_screener()
+        save_watchlist([r3, r4, r5, r6])
         return
 
     # 排程執行（不帶參數）：
@@ -1368,10 +1404,11 @@ def main():
     save(stocks, date_iso, source, update_latest=True)
     save_market_history(date_iso)
     save_group_momentum()
-    save_screener()
-    save_reversal_screener()
-    save_v2_screener()
-    save_v5_screener()
+    r3 = save_screener()
+    r4 = save_reversal_screener()
+    r5 = save_v2_screener()
+    r6 = save_v5_screener()
+    save_watchlist([r3, r4, r5, r6])
 
 
 if __name__ == "__main__":
