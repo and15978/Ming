@@ -951,6 +951,179 @@ def compute_v5_screener(data_dir="data", lookback_days=60):
     }
 
 
+def compute_v4_screener(data_dir="data", lookback_days=60):
+    """
+    隔日當沖策略 V4.0（收盤後篩選）：
+    第1層 核心條件（全部必須符合）：
+      做多：收盤>BBAND中軌、收盤>5日均線、成交量>5日均量×1.3、MACD柱狀圖增加、收盤>開盤
+      放空：方向相反
+    第2層 加分條件（6項符合3項以上）：收盤位置、KD交叉、BBAND中軌方向、振幅4~8%、
+      影線<實體50%、量不能爆量(<5日均量×3)
+    第3層 避開洗盤（符合任一項就直接排除）：振幅>10%、爆量>5日均量×3、
+      上下影線合計>實體、近3日平均振幅>8%、收盤卡在當日中間48~52%
+    第4層（隔日開盤5分K確認）跟後面的進出場建議，需要盤中資料或屬於執行面，
+    不在這裡計算，只在前端顯示參考文字。
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
+    if history is None:
+        return None
+
+    latest_date = dates_used[-1]
+    long_picks = []
+    short_picks = []
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        idx = len(series) - 1
+        if idx < 20:
+            continue
+
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        highs = [r["high"] for r in series]
+        lows = [r["low"] for r in series]
+        vols = [r["volume"] for r in series]
+        prev_close = series[idx - 1]["close"] if idx >= 1 else None
+
+        bband_mid = _sma(closes, 20, idx)
+        bband_mid_yday = _sma(closes, 20, idx - 1) if idx - 1 >= 19 else None
+        ma5 = _sma(closes, 5, idx)
+        vol5avg = _sma(vols, 5, idx - 1) if idx - 1 >= 4 else None
+
+        above_bband = bool(bband_mid and today["close"] > bband_mid)
+        below_bband = bool(bband_mid and today["close"] < bband_mid)
+        above_ma5 = bool(ma5 and today["close"] > ma5)
+        below_ma5 = bool(ma5 and today["close"] < ma5)
+        vol_ok = bool(vol5avg and today["volume"] and today["volume"] > vol5avg * 1.3)
+
+        _, _, hist_series = _compute_macd(closes)
+        hist_today, hist_yday = hist_series[idx], (hist_series[idx - 1] if idx >= 1 else None)
+        macd_ready = hist_today is not None and hist_yday is not None
+        macd_up = bool(macd_ready and hist_today > hist_yday)   # 紅柱擴大或綠柱縮短＝值變大
+        macd_down = bool(macd_ready and hist_today < hist_yday)  # 綠柱擴大或紅柱縮短＝值變小
+
+        red_k = bool(today["open"] is not None and today["close"] > today["open"])
+        black_k = bool(today["open"] is not None and today["close"] < today["open"])
+
+        core_long = above_bband and above_ma5 and vol_ok and macd_up and red_k
+        core_short = below_bband and below_ma5 and vol_ok and macd_down and black_k
+        if not (core_long or core_short):
+            continue
+
+        # ── 第2層 加分條件 ──
+        rng = None
+        body = None
+        upper_shadow = None
+        lower_shadow = None
+        close_pos = None
+        if today["high"] is not None and today["low"] is not None and today["open"] is not None:
+            rng = today["high"] - today["low"]
+            body = abs(today["close"] - today["open"])
+            upper_shadow = today["high"] - max(today["open"], today["close"])
+            lower_shadow = min(today["open"], today["close"]) - today["low"]
+            if rng > 0:
+                close_pos = (today["close"] - today["low"]) / rng
+
+        amplitude = None
+        if rng is not None and prev_close:
+            amplitude = rng / prev_close * 100
+
+        k_series, d_series = _compute_kd(highs, lows, closes)
+        k_today, d_today = k_series[idx], d_series[idx]
+
+        near_high = bool(today["high"] and today["close"] >= today["high"] * 0.98)
+        near_low = bool(today["low"] and today["close"] <= today["low"] * 1.02)
+        kd_up = bool(k_today is not None and d_today is not None and k_today > d_today)
+        kd_down = bool(k_today is not None and d_today is not None and k_today < d_today)
+        bband_rising = bool(bband_mid and bband_mid_yday and bband_mid > bband_mid_yday)
+        bband_falling = bool(bband_mid and bband_mid_yday and bband_mid < bband_mid_yday)
+        amp_in_range = bool(amplitude is not None and 4 <= amplitude <= 8)
+        upper_shadow_small = bool(body is not None and upper_shadow is not None and body > 0 and upper_shadow < body * 0.5)
+        lower_shadow_small = bool(body is not None and lower_shadow is not None and body > 0 and lower_shadow < body * 0.5)
+        not_overheated_vol = bool(vol5avg and today["volume"] and today["volume"] < vol5avg * 3)
+
+        bonus_long_count = sum([near_high, kd_up, bband_rising, amp_in_range, upper_shadow_small, not_overheated_vol])
+        bonus_short_count = sum([near_low, kd_down, bband_falling, amp_in_range, lower_shadow_small, not_overheated_vol])
+
+        # ── 第3層 避開洗盤（任一項觸發就直接排除，不分方向）──
+        chop_amp_too_big = bool(amplitude is not None and amplitude > 10)
+        chop_overvolume = bool(vol5avg and today["volume"] and today["volume"] > vol5avg * 3)
+        chop_shadow_too_long = bool(body is not None and upper_shadow is not None and lower_shadow is not None and (upper_shadow + lower_shadow) > body)
+        chop_recent3_amp = None
+        if idx >= 2:
+            amps3 = []
+            for j in range(idx - 2, idx + 1):
+                r = series[j]
+                pc = series[j - 1]["close"] if j >= 1 else None
+                if r["high"] is not None and r["low"] is not None and pc:
+                    amps3.append((r["high"] - r["low"]) / pc * 100)
+            if len(amps3) == 3:
+                chop_recent3_amp = sum(amps3) / 3
+        chop_recent3_too_big = bool(chop_recent3_amp is not None and chop_recent3_amp > 8)
+        chop_middle_position = bool(close_pos is not None and 0.48 <= close_pos <= 0.52)
+
+        chop_reasons = []
+        if chop_amp_too_big: chop_reasons.append("當日振幅>10%")
+        if chop_overvolume: chop_reasons.append("成交量異常爆量(>5日均量×3)")
+        if chop_shadow_too_long: chop_reasons.append("上下影線合計>實體")
+        if chop_recent3_too_big: chop_reasons.append("近3日平均振幅>8%")
+        if chop_middle_position: chop_reasons.append("收盤卡在當日中間區(48~52%)")
+        is_chop = bool(chop_reasons)
+
+        base = {
+            "code": code, "name": today.get("name"),
+            "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
+            "todayOpen": today["open"],
+            "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
+            "bbandMid": bband_mid, "ma5": ma5, "vol5avg": vol5avg, "volToday": today["volume"],
+            "amplitude": amplitude, "kToday": k_today, "dToday": d_today,
+            "macdHistToday": hist_today, "macdHistYesterday": hist_yday,
+            "historyDays": len(series), "chopReasons": chop_reasons,
+        }
+
+        if core_long and bonus_long_count >= 3 and not is_chop:
+            entry = dict(base)
+            entry["bonusCount"] = bonus_long_count
+            long_picks.append(entry)
+        if core_short and bonus_short_count >= 3 and not is_chop:
+            entry = dict(base)
+            entry["bonusCount"] = bonus_short_count
+            short_picks.append(entry)
+
+    long_picks.sort(key=lambda x: x["bonusCount"], reverse=True)
+    short_picks.sort(key=lambda x: x["bonusCount"], reverse=True)
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "checked_count": len(history),
+        "long": long_picks,
+        "short": short_picks,
+        "note": "第1層核心條件全符合＋第2層加分條件6項符合3項以上＋第3層避開洗盤（任一項觸發即排除）。第4層隔日開盤5分K確認、進出場建議屬於執行面，前端只顯示參考，不參與篩選。",
+    }
+
+
+def save_v4_screener(data_dir="data"):
+    """把V4當沖策略結果存成 data/v4_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
+    try:
+        result = compute_v4_screener(data_dir=data_dir)
+        if result is None:
+            return None
+        out_path = os.path.join(data_dir, "v4_screener.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"v4_screener_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[V4策略] 已寫入 {out_path} 與 {dated_path}，做多候選 {len(result['long'])} 檔，放空候選 {len(result['short'])} 檔")
+        return result
+    except Exception as e:
+        print(f"[V4策略] 計算失敗（{e}），略過（不影響個股資料）")
+        return None
+
+
 def save_v5_screener(data_dir="data"):
     """把V5雷達結果存成 data/v5_screener.json 與帶日期快照，失敗不影響其他資料抓取。"""
     try:
@@ -1379,7 +1552,8 @@ def main():
         r4 = save_reversal_screener()
         r5 = save_v2_screener()
         r6 = save_v5_screener()
-        save_watchlist([r3, r4, r5, r6])
+        r7 = save_v4_screener()
+        save_watchlist([r3, r4, r5, r6, r7])
         return
 
     # 排程執行（不帶參數）：
@@ -1408,7 +1582,8 @@ def main():
     r4 = save_reversal_screener()
     r5 = save_v2_screener()
     r6 = save_v5_screener()
-    save_watchlist([r3, r4, r5, r6])
+    r7 = save_v4_screener()
+    save_watchlist([r3, r4, r5, r6, r7])
 
 
 if __name__ == "__main__":
