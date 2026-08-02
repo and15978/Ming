@@ -967,6 +967,7 @@ def compute_v4_screener(data_dir="data", lookback_days=60):
     history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
     if history is None:
         return None
+    industry_map = _load_industry_map(data_dir)
 
     latest_date = dates_used[-1]
     long_picks = []
@@ -1072,8 +1073,11 @@ def compute_v4_screener(data_dir="data", lookback_days=60):
         if chop_middle_position: chop_reasons.append("收盤卡在當日中間區(48~52%)")
         is_chop = bool(chop_reasons)
 
+        support = _find_support_level(series, idx)
+
         base = {
             "code": code, "name": today.get("name"),
+            "industry": industry_map.get(code),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -1081,6 +1085,9 @@ def compute_v4_screener(data_dir="data", lookback_days=60):
             "amplitude": amplitude, "kToday": k_today, "dToday": d_today,
             "macdHistToday": hist_today, "macdHistYesterday": hist_yday,
             "historyDays": len(series), "chopReasons": chop_reasons,
+            "supportLevel": support["level"] if support else None,
+            "supportTouches": support["touches"] if support else None,
+            "supportBroken": support["broken"] if support else None,
         }
 
         if core_long and bonus_long_count >= 3 and not is_chop:
