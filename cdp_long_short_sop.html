@@ -326,6 +326,22 @@
     <div id="v4Status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
   </div>
 
+  <div class="autofetch-box" style="margin-top:10px;">
+    <div class="hint" style="margin-bottom:10px;">股票太多不知道選哪支？加幾個更嚴謹的篩選（都不勾＝原本清單；勾了才會再篩掉不符合的），同時每張卡片會標示「⭐優先觀察」給你參考。</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="v4FilterGroup" style="width:18px;height:18px;"> 所屬族群同步（在STEP2最強/最弱名單內）
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="v4FilterSupport" style="width:18px;height:18px;"> 近期支撐從未跌破
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 10px;">
+      <input type="checkbox" id="v4FilterAmp" style="width:18px;height:18px;"> 振幅落在4%~8%理想區間
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0;">
+      <input type="checkbox" id="v4FilterVolCap" style="width:18px;height:18px;"> 量能倍數不超過5倍（避免疑似出貨爆量）
+    </label>
+  </div>
+
   <div id="v4Results"></div>
 
   <div class="ref-card" style="margin:14px 0 0;">
@@ -1404,6 +1420,8 @@ document.getElementById('v5FilterMacd').addEventListener('change', ()=>{ if(last
 document.getElementById('v5FilterVolUp').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
 document.getElementById('v5FilterBreakout5').addEventListener('change', ()=>{ if(lastV5Json) renderV5Results(lastV5Json); });
 
+let lastV4Json = null;
+
 async function fetchV4(){
   const statusEl = document.getElementById('v4Status');
   const wrap = document.getElementById('v4Results');
@@ -1431,13 +1449,45 @@ async function fetchV4(){
         throw e;
       }
     }
+    lastV4Json = json;
     const fallbackNote = usedFallback ? `（找不到 ${wantedDate} 的存檔，已改讀最新一筆）` : '';
     statusEl.textContent = `已讀取 ${json.trade_date||'?'} V4策略結果，共檢查 ${json.checked_count||0} 檔，用了 ${json.history_days||0} 天歷史資料${fallbackNote}`;
     renderV4Results(json);
   }catch(e){
+    lastV4Json = null;
     wrap.innerHTML = '';
     statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/v4_screener.json 會自動產生。';
   }
+}
+
+function v4IndustrySynced(pick, dir){
+  if(!pick.industry) return false;
+  const listStr = (dir==='long' ? state.strong : state.weak) || '';
+  const items = listStr.split(/[,，]/).map(x=>x.trim()).filter(Boolean);
+  return items.some(g => g && pick.industry.includes(g));
+}
+function v4SupportOk(pick){
+  return pick.supportLevel!==null && pick.supportLevel!==undefined && pick.supportBroken===false;
+}
+function v4AmpIdeal(pick){
+  return pick.amplitude!==null && pick.amplitude!==undefined && pick.amplitude>=4 && pick.amplitude<=8;
+}
+function v4VolRatio(pick){
+  return (pick.vol5avg && pick.volToday) ? pick.volToday/pick.vol5avg : null;
+}
+function v4VolCapOk(pick){
+  const r = v4VolRatio(pick);
+  return r!==null && r<=5;
+}
+function v4PriorityScore(pick, dir){
+  return [v4IndustrySynced(pick,dir), v4SupportOk(pick), v4AmpIdeal(pick), v4VolCapOk(pick)].filter(Boolean).length;
+}
+function passesV4ExtraFilters(pick, dir){
+  if(document.getElementById('v4FilterGroup').checked && !v4IndustrySynced(pick,dir)) return false;
+  if(document.getElementById('v4FilterSupport').checked && !v4SupportOk(pick)) return false;
+  if(document.getElementById('v4FilterAmp').checked && !v4AmpIdeal(pick)) return false;
+  if(document.getElementById('v4FilterVolCap').checked && !v4VolCapOk(pick)) return false;
+  return true;
 }
 
 function v4Card(pick, dir){
@@ -1448,15 +1498,20 @@ function v4Card(pick, dir){
   const pctHtml = (pct!==null && pct!==undefined)
     ? `<span style="font-size:13px;font-weight:700;color:${pct>=0?'var(--long)':'var(--short)'};">${pct>=0?'+':''}${pct.toFixed(2)}%</span>` : '';
   const volZhang = pick.volToday ? Math.round(pick.volToday/1000) : null;
-  const volRatio = (pick.vol5avg && pick.volToday) ? (pick.volToday/pick.vol5avg).toFixed(2) : null;
+  const volRatioVal = v4VolRatio(pick);
+  const volRatio = volRatioVal!==null ? volRatioVal.toFixed(2) : null;
+  const priority = v4PriorityScore(pick, dir);
+  const priorityBadge = priority>=3 ? `<div style="display:inline-block;margin-top:6px;padding:3px 10px;border-radius:12px;background:var(--gold);color:#1a1305;font-size:11.5px;font-weight:700;">⭐ 優先觀察（${priority}/4項參考條件符合）</div>` : '';
 
   const detailLines = [
     `加分條件符合 ${pick.bonusCount}/6 項`,
+    `所屬族群 ${pick.industry||'—'}${v4IndustrySynced(pick,dir)?'（與STEP2族群同步✓）':''}`,
     `BBAND中軌 ${pick.bbandMid!==null&&pick.bbandMid!==undefined?pick.bbandMid.toFixed(2):'—'}（${isLong?'已站上':'已跌破'}） ｜ 5日均線 ${pick.ma5?pick.ma5.toFixed(2):'—'}`,
     `量能 ${volZhang?volZhang+'張':'—'} ｜ 5日均量倍數 ${volRatio?volRatio+'倍':'—'}`,
     `KD K值 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ D值 ${pick.dToday!==null&&pick.dToday!==undefined?pick.dToday.toFixed(1):'—'}`,
     `MACD柱狀圖 今日 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'} ｜ 昨日 ${pick.macdHistYesterday!==null&&pick.macdHistYesterday!==undefined?pick.macdHistYesterday.toFixed(2):'—'}`,
     `當日振幅 ${(pick.amplitude!==null&&pick.amplitude!==undefined)?pick.amplitude.toFixed(2)+'%':'—'}`,
+    supportLineText(pick),
   ];
 
   return `
@@ -1465,6 +1520,7 @@ function v4Card(pick, dir){
         <div class="result-name">${isLong?'🐂':'🐻'} ${pick.name||''} <span style="color:var(--muted);font-size:12px;">${pick.code||''}</span></div>
         ${pctHtml}
       </div>
+      ${priorityBadge}
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
       <ul class="cond-list" style="margin-top:8px;">
@@ -1477,22 +1533,37 @@ function v4Card(pick, dir){
 
 function renderV4Results(json){
   const wrap = document.getElementById('v4Results');
-  const longList = json.long || [];
-  const shortList = json.short || [];
+  const longListAll = json.long || [];
+  const shortListAll = json.short || [];
+
+  const longList = longListAll
+    .filter(p=>passesV4ExtraFilters(p,'long'))
+    .slice()
+    .sort((a,b)=> v4PriorityScore(b,'long')-v4PriorityScore(a,'long') || b.bonusCount-a.bonusCount);
+  const shortList = shortListAll
+    .filter(p=>passesV4ExtraFilters(p,'short'))
+    .slice()
+    .sort((a,b)=> v4PriorityScore(b,'short')-v4PriorityScore(a,'short') || b.bonusCount-a.bonusCount);
+
+  const anyFilterOn = document.getElementById('v4FilterGroup').checked
+    || document.getElementById('v4FilterSupport').checked
+    || document.getElementById('v4FilterAmp').checked
+    || document.getElementById('v4FilterVolCap').checked;
+  const filterNote = anyFilterOn ? `（額外篩選前原本做多${longListAll.length}檔、放空${shortListAll.length}檔）` : '';
 
   if(longList.length===0 && shortList.length===0){
-    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票通過三層篩選，這是正常的，門檻不低。</div></div>`;
+    wrap.innerHTML = `<div class="section"><div class="empty">這天沒有股票通過篩選${filterNote}，這是正常的，門檻不低。</div></div>`;
     return;
   }
 
   let html = '';
   if(longList.length){
-    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔）</div>`;
+    html += `<div class="section"><div class="step-label" style="color:var(--long)">🐂 做多候選（${longList.length}檔，已依優先分數排序）${filterNote}</div>`;
     html += longList.map(p=>v4Card(p,'long')).join('');
     html += `</div>`;
   }
   if(shortList.length){
-    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔）</div>`;
+    html += `<div class="section"><div class="step-label" style="color:var(--short)">🐻 放空候選（${shortList.length}檔，已依優先分數排序）${filterNote}</div>`;
     html += shortList.map(p=>v4Card(p,'short')).join('');
     html += `</div>`;
   }
@@ -1501,6 +1572,11 @@ function renderV4Results(json){
   }
   wrap.innerHTML = html;
 }
+
+document.getElementById('v4FilterGroup').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
+document.getElementById('v4FilterSupport').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
+document.getElementById('v4FilterAmp').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
+document.getElementById('v4FilterVolCap').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
 
 function pctChangeOf(s){
   const close = parseFloat(s.ClosingPrice);
