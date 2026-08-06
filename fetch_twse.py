@@ -422,6 +422,7 @@ def compute_screener(data_dir="data", lookback_days=25):
         support = _find_support_level(series, idx)
 
         base = {
+            "costChart": _build_cost_chart(series, idx),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"], "pctToday": pct_today,
@@ -571,6 +572,7 @@ def compute_reversal_screener(data_dir="data", lookback_days=65):
         support = _find_support_level(series, idx)
 
         base = {
+            "costChart": _build_cost_chart(series, idx),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"],
@@ -643,6 +645,33 @@ def _compute_macd(closes, fast=12, slow=26, signal_span=9):
             signal[i] = sig_vals[j]
     hist = [(m - s) if (m is not None and s is not None) else None for m, s in zip(macd_line, signal)]
     return macd_line, signal, hist
+
+
+def _build_cost_chart(series, idx, price_days=30, vwma_window=20):
+    """
+    給前端畫「成本線」迷你圖用的資料。
+    這裡的成本線是「20日成交量加權平均價(VWMA)」，是業界常見的近似做法，
+    不是用真實籌碼分布反推的主力成本（那個需要更細的資料，我們沒有），
+    前端顯示時要標註清楚這是近似值。
+    """
+    start = max(0, idx - price_days + 1)
+    window = series[start:idx + 1]
+    dates = [r["date"][5:] for r in window]  # 只留 MM-DD
+    closes = [round(r["close"], 2) if r["close"] is not None else None for r in window]
+
+    cost_line = []
+    for i in range(len(window)):
+        abs_i = start + i
+        w_start = max(0, abs_i - vwma_window + 1)
+        w = series[w_start:abs_i + 1]
+        total_v = sum((r["volume"] or 0) for r in w)
+        if total_v > 0:
+            wsum = sum((r["close"] or 0) * (r["volume"] or 0) for r in w)
+            cost_line.append(round(wsum / total_v, 2))
+        else:
+            cost_line.append(None)
+
+    return {"dates": dates, "closes": closes, "costLine": cost_line}
 
 
 def _find_support_level(series, idx, lookback=20, tolerance=0.015):
@@ -805,6 +834,7 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
         not_limit_locked_yday = (not yday_limit_locked) if yday else None
 
         base = {
+            "costChart": _build_cost_chart(series, idx),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -919,6 +949,7 @@ def compute_v5_screener(data_dir="data", lookback_days=60):
         breakout5_low = bool(low5 is not None and today["close"] < low5)
 
         base = {
+            "costChart": _build_cost_chart(series, idx),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -1076,6 +1107,7 @@ def compute_v4_screener(data_dir="data", lookback_days=60):
         support = _find_support_level(series, idx)
 
         base = {
+            "costChart": _build_cost_chart(series, idx),
             "code": code, "name": today.get("name"),
             "industry": industry_map.get(code),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
