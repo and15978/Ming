@@ -503,6 +503,50 @@ function renderInputs(){
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
   document.getElementById('marketFutures').onchange = e=>{ state.marketFutures=e.target.value; save(); };
 }
+function costChartSvg(chart){
+  if(!chart || !chart.closes || chart.closes.length<2){
+    return '<div style="font-size:11px;color:var(--muted);">成本線資料不足</div>';
+  }
+  const W = 300, H = 70, PAD = 4;
+  const closes = chart.closes, cost = chart.costLine;
+  const allVals = closes.concat(cost).filter(v=>v!==null && v!==undefined);
+  if(allVals.length<2) return '<div style="font-size:11px;color:var(--muted);">成本線資料不足</div>';
+  const min = Math.min(...allVals), max = Math.max(...allVals);
+  const range = (max-min) || 1;
+  const n = closes.length;
+  const xStep = (W-PAD*2) / (n-1);
+  const toY = v => H-PAD - ((v-min)/range) * (H-PAD*2);
+
+  function pathFor(arr){
+    let d = '';
+    let started = false;
+    arr.forEach((v,i)=>{
+      if(v===null || v===undefined) return;
+      const x = PAD + i*xStep;
+      const y = toY(v);
+      d += (started ? 'L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+      started = true;
+    });
+    return d.trim();
+  }
+
+  const priceLine = pathFor(closes);
+  const costLine = pathFor(cost);
+  const lastClose = closes[closes.length-1];
+  const lastCost = cost[cost.length-1];
+
+  return `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
+      <path d="${costLine}" fill="none" stroke="#38d9d9" stroke-width="1.6" opacity="0.9"/>
+      <path d="${priceLine}" fill="none" stroke="#e8edf5" stroke-width="1.6"/>
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-top:2px;">
+      <span><span style="color:#e8edf5;">■</span> 收盤 ${lastClose!==null&&lastClose!==undefined?lastClose.toFixed(2):'—'}</span>
+      <span><span style="color:#38d9d9;">■</span> 成本線(20日VWMA,近似值) ${lastCost!==null&&lastCost!==undefined?lastCost.toFixed(2):'—'}</span>
+    </div>
+  `;
+}
+
 function cdpZoneHtml(price, c){
   // 由上到下：超強 → 超弱，跟參考圖一樣的排法
   const zones = [
@@ -998,6 +1042,7 @@ function screenerCard(pick, dir){
       </div>
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
+      <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1119,6 +1164,7 @@ function reversalCard(pick, dir){
       </div>
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
+      <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1226,6 +1272,7 @@ function v2Card(pick, dir){
       </div>
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
+      <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1358,6 +1405,7 @@ function v5Card(pick, dir){
       </div>
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
+      <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1523,6 +1571,7 @@ function v4Card(pick, dir){
       ${priorityBadge}
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
+      <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
