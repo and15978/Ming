@@ -503,6 +503,12 @@ function renderInputs(){
   document.getElementById('marketVwap').onchange = e=>{ state.marketVwap=e.target.value; save(); };
   document.getElementById('marketFutures').onchange = e=>{ state.marketFutures=e.target.value; save(); };
 }
+function volShrinkWarningHtml(pick){
+  if(!pick.volShrinkWarning) return '';
+  const pct = (pick.volShrinkPct!==null && pick.volShrinkPct!==undefined) ? pick.volShrinkPct.toFixed(0) : '?';
+  return `<div class="warn-line" style="margin-top:6px;">⚠ 縮量警示：今日成交量比昨日少了約${pct}%，爆量後動能可能撐不久，留意能不能延續</div>`;
+}
+
 function costChartSvg(chart){
   if(!chart || !chart.closes || chart.closes.length<2){
     return '<div style="font-size:11px;color:var(--muted);">成本線資料不足</div>';
@@ -1043,6 +1049,7 @@ function screenerCard(pick, dir){
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
       <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
+      ${volShrinkWarningHtml(pick)}
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1165,6 +1172,7 @@ function reversalCard(pick, dir){
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
       <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
+      ${volShrinkWarningHtml(pick)}
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1273,6 +1281,7 @@ function v2Card(pick, dir){
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
       <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
+      ${volShrinkWarningHtml(pick)}
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1406,6 +1415,7 @@ function v5Card(pick, dir){
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
       <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
+      ${volShrinkWarningHtml(pick)}
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
@@ -1572,6 +1582,7 @@ function v4Card(pick, dir){
       <div style="font-size:13.5px;color:var(--text);margin-top:4px;">收盤 <b>${pick.prevClose!==null&&pick.prevClose!==undefined?pick.prevClose.toFixed(2):'—'}</b></div>
       <div style="margin-top:4px;">${cdpHtml}</div>
       <div style="margin-top:8px;background:#0b1119;border-radius:8px;padding:6px 8px;">${costChartSvg(pick.costChart)}</div>
+      ${volShrinkWarningHtml(pick)}
       <ul class="cond-list" style="margin-top:8px;">
         ${detailLines.map(l=>`<li class="ok">${l}</li>`).join('')}
       </ul>
