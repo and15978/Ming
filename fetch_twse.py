@@ -423,6 +423,8 @@ def compute_screener(data_dir="data", lookback_days=25):
 
         base = {
             "costChart": _build_cost_chart(series, idx),
+            "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
+            "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"], "pctToday": pct_today,
@@ -573,6 +575,8 @@ def compute_reversal_screener(data_dir="data", lookback_days=65):
 
         base = {
             "costChart": _build_cost_chart(series, idx),
+            "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
+            "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"],
@@ -835,6 +839,8 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
 
         base = {
             "costChart": _build_cost_chart(series, idx),
+            "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
+            "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -950,6 +956,8 @@ def compute_v5_screener(data_dir="data", lookback_days=60):
 
         base = {
             "costChart": _build_cost_chart(series, idx),
+            "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
+            "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -1108,6 +1116,8 @@ def compute_v4_screener(data_dir="data", lookback_days=60):
 
         base = {
             "costChart": _build_cost_chart(series, idx),
+            "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
+            "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
             "code": code, "name": today.get("name"),
             "industry": industry_map.get(code),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
