@@ -1013,6 +1013,10 @@ async function fetchScreener(){
   }
 }
 
+function industryLineText(pick){
+  return `所屬族群 ${pick.industry||'—（沒有族群對照資料）'}`;
+}
+
 function supportLineText(pick){
   if(pick.supportLevel===null || pick.supportLevel===undefined) return `近期支撐：資料不足，無法判斷`;
   const status = pick.supportBroken ? '，測試後曾經跌破，參考性較低' : '，每次測試都撐住';
@@ -1038,6 +1042,7 @@ function screenerCard(pick, dir){
   ];
   detailLines.push(`量能 ${volZhang?volZhang+'張':'—'} ｜ 5日均量倍數 ${volRatio?volRatio+'倍':'—'} ｜ 成交金額約 ${(pick.valueApprox/1e8).toFixed(1)}億`);
   detailLines.push(`3日累計漲跌 ${(pick.chg3!==null&&pick.chg3!==undefined)?(pick.chg3>=0?'+':'')+pick.chg3.toFixed(2)+'%':'—'}`);
+  detailLines.push(industryLineText(pick));
   detailLines.push(supportLineText(pick));
 
   return `
@@ -1138,6 +1143,7 @@ function reversalCard(pick, dir){
     isLong ? `收盤 ${pick.prevClose.toFixed(2)} 明顯高於當日低點 ${pick.prevLow?pick.prevLow.toFixed(2):'—'}（長下影，買盤回升）`
            : `收盤 ${pick.prevClose.toFixed(2)} 明顯低於當日高點 ${pick.prevHigh?pick.prevHigh.toFixed(2):'—'}（長上影，賣壓轉強）`,
     `KD K值 ${pick.kToday!==null&&pick.kToday!==undefined?pick.kToday.toFixed(1):'—'} ｜ D值 ${pick.dToday!==null&&pick.dToday!==undefined?pick.dToday.toFixed(1):'—'} ｜ MACD柱狀圖 ${pick.macdHistToday!==null&&pick.macdHistToday!==undefined?pick.macdHistToday.toFixed(2):'—'}`,
+    industryLineText(pick),
     supportLineText(pick),
   ];
 
@@ -1270,6 +1276,7 @@ function v2Card(pick, dir){
     `BBAND中軌 ${pick.bbandMid!==null&&pick.bbandMid!==undefined?pick.bbandMid.toFixed(2):'—'}（${isLong?(pick.aboveBbandMid?'已站上':'尚未站上'):(pick.belowBbandMid?'已跌破':'尚未跌破')}）`,
     `外資/主力 ${pick.instDataAvailable?(isLong?(pick.instStreakBuy?'連續2日買超':'非連續買超'):(pick.instStreakSell?'連續2日賣超':'非連續賣超')):'這天缺法人資料，無法判斷'}`,
     `昨日鎖死 ${pick.notLimitLockedYesterday===null||pick.notLimitLockedYesterday===undefined?'—':(pick.notLimitLockedYesterday?'否（正常）':'是（漲跌停鎖死）')}`,
+    industryLineText(pick),
   ];
 
   return `
@@ -1404,6 +1411,7 @@ function v5Card(pick, dir){
     `MACD ${isLong?(pick.macdBullOk?'綠柱縮短或DIF上彎':'尚未轉強'):(pick.macdBearOk?'紅柱縮短或DIF下彎':'尚未轉弱')}`,
     `今日量${pick.volUpDod?'>':'≤'}昨日量`,
     `近5日${isLong?'最高':'最低'} ${isLong?(pick.high5!==null&&pick.high5!==undefined?pick.high5.toFixed(2):'—'):(pick.low5!==null&&pick.low5!==undefined?pick.low5.toFixed(2):'—')}（${isLong?(pick.breakout5High?'已突破':'尚未突破'):(pick.breakout5Low?'已跌破':'尚未跌破')}）`,
+    industryLineText(pick),
   ];
 
   return `
