@@ -360,6 +360,7 @@ def compute_screener(data_dir="data", lookback_days=25):
     history, dates_used = _load_price_history(data_dir, lookback_days, min_days=6)
     if history is None:
         return None
+    industry_map = _load_industry_map(data_dir)
 
     latest_date = dates_used[-1]
     long_picks = []
@@ -425,6 +426,7 @@ def compute_screener(data_dir="data", lookback_days=25):
             "costChart": _build_cost_chart(series, idx),
             "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
             "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
+            "industry": industry_map.get(code) if industry_map else None,
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"], "pctToday": pct_today,
@@ -468,6 +470,7 @@ def compute_reversal_screener(data_dir="data", lookback_days=65):
     history, dates_used = _load_price_history(data_dir, lookback_days, min_days=11)
     if history is None:
         return None
+    industry_map = _load_industry_map(data_dir)
 
     latest_date = dates_used[-1]
     long_picks = []
@@ -577,6 +580,7 @@ def compute_reversal_screener(data_dir="data", lookback_days=65):
             "costChart": _build_cost_chart(series, idx),
             "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
             "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
+            "industry": industry_map.get(code) if industry_map else None,
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "todayOpen": today["open"],
@@ -762,6 +766,7 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
     history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
     if history is None:
         return None
+    industry_map = _load_industry_map(data_dir)
 
     latest_date = dates_used[-1]
     long_picks = []
@@ -841,6 +846,7 @@ def compute_v2_screener(data_dir="data", lookback_days=60):
             "costChart": _build_cost_chart(series, idx),
             "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
             "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
+            "industry": industry_map.get(code) if industry_map else None,
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -883,6 +889,7 @@ def compute_v5_screener(data_dir="data", lookback_days=60):
     history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
     if history is None:
         return None
+    industry_map = _load_industry_map(data_dir)
 
     latest_date = dates_used[-1]
     long_picks = []
@@ -958,6 +965,7 @@ def compute_v5_screener(data_dir="data", lookback_days=60):
             "costChart": _build_cost_chart(series, idx),
             "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
             "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
+            "industry": industry_map.get(code) if industry_map else None,
             "code": code, "name": today.get("name"),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
             "pctToday": ((today["close"] - prev_close) / prev_close * 100) if prev_close else None,
@@ -1118,6 +1126,7 @@ def compute_v4_screener(data_dir="data", lookback_days=60):
             "costChart": _build_cost_chart(series, idx),
             "volShrinkWarning": bool(idx>=1 and series[idx-1]["volume"] and today["volume"] and today["volume"] < series[idx-1]["volume"]*0.7),
             "volShrinkPct": (round((1 - today["volume"]/series[idx-1]["volume"])*100,1) if (idx>=1 and series[idx-1]["volume"] and today["volume"]) else None),
+            "industry": industry_map.get(code) if industry_map else None,
             "code": code, "name": today.get("name"),
             "industry": industry_map.get(code),
             "prevClose": today["close"], "prevHigh": today["high"], "prevLow": today["low"],
