@@ -230,6 +230,198 @@ def compute_group_momentum(data_dir="data", lookback_days=25):
     }
 
 
+def _load_market_index_returns(data_dir="data"):
+    """讀取 data/market.json 的大盤指數歷史，算5日/20日累計漲跌%。抓不到回傳(None,None)"""
+    path = os.path.join(data_dir, "market.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        history = raw.get("history") or []
+        history = sorted(history, key=lambda r: r["date"])
+        if not history:
+            return None, None
+        closes = [r["close"] for r in history]
+        idx = len(closes) - 1
+        chg5 = ((closes[idx] - closes[idx - 5]) / closes[idx - 5] * 100) if idx >= 5 else None
+        chg20 = ((closes[idx] - closes[idx - 20]) / closes[idx - 20] * 100) if idx >= 20 else None
+        return chg5, chg20
+    except Exception:
+        return None, None
+
+
+def compute_sector_rotation(data_dir="data", lookback_days=25):
+    """
+    板塊輪動篩選公式（收盤後篩選，預判隔日當沖方向，板塊強度判斷）。
+
+    對每個產業板塊算5項指標，都是跟「大盤」比較相對強弱：
+      A 短線強度 = 板塊5日漲幅 - 大盤5日漲幅（做多門檻 >=+3%，做空 <=-3%）
+      B 中期強度 = 板塊20日漲幅 - 大盤20日漲幅（做多 >=+5%，做空 <=-5%）
+      C 資金進入 = 今日板塊成交量 / 20日平均成交量（做多 >=1.3，做空 <=0.7）
+      D 板塊廣度 = 板塊上漲家數 / 板塊總家數（做多 >=60%，做空 <=40%）
+      E 強勢股集中 = 當日漲跌幅>5%的家數 / 板塊總家數（做多看漲幅>5%比例，做空看跌幅>5%比例，都是 >=20%）
+
+    5項全符合＝主升/主跌板塊、4項＝強勢/弱勢板塊、3項＝輪動觀察、≤2項＝不做。
+
+    另外算一個「板塊輪動分數」，把5個指標各自標準化到-100~+100分後依權重
+    （30%/20%/20%/15%/15%）加總。原始圖片只給了權重比例，沒有給精確的
+    標準化公式，這裡用的線性縮放是我自己合理設計的版本，不是圖片裡的
+    官方公式，數值大小僅供參考排序用，不代表絕對精準。
+    """
+    history, dates_used = _load_price_history(data_dir, lookback_days, min_days=21)
+    if history is None:
+        return None
+    industry_map = _load_industry_map(data_dir)
+    if not industry_map:
+        print("[板塊輪動] 找不到 data/industry_map.json，略過")
+        return None
+
+    market_chg5, market_chg20 = _load_market_index_returns(data_dir)
+    if market_chg5 is None or market_chg20 is None:
+        print("[板塊輪動] 大盤指數歷史不足（需要 data/market.json 至少20天），略過")
+        return None
+
+    latest_date = dates_used[-1]
+    groups = {}  # industry -> list of per-stock metrics
+
+    for code, series in history.items():
+        series = [r for r in series if r["close"] is not None]
+        if not series or series[-1]["date"] != latest_date:
+            continue
+        industry = industry_map.get(code)
+        if not industry:
+            continue
+        idx = len(series) - 1
+        if idx < 20:
+            continue
+
+        today = series[idx]
+        closes = [r["close"] for r in series]
+        vols = [r["volume"] for r in series]
+        prev_close = series[idx - 1]["close"] if idx >= 1 else None
+
+        chg5 = ((today["close"] - series[idx - 5]["close"]) / series[idx - 5]["close"] * 100) if series[idx - 5]["close"] else None
+        chg20 = ((today["close"] - series[idx - 20]["close"]) / series[idx - 20]["close"] * 100) if series[idx - 20]["close"] else None
+        daily_pct = ((today["close"] - prev_close) / prev_close * 100) if prev_close else None
+        vol20avg = _sma(vols, 20, idx)
+        vol_today = today["volume"] or 0
+
+        if chg5 is None or chg20 is None or daily_pct is None:
+            continue
+
+        groups.setdefault(industry, []).append({
+            "code": code, "chg5": chg5, "chg20": chg20, "dailyPct": daily_pct,
+            "volToday": vol_today, "vol20avg": vol20avg or 0,
+        })
+
+    def clamp(v, lo=-100, hi=100):
+        return max(lo, min(hi, v))
+
+    rows = []
+    for industry, items in groups.items():
+        count = len(items)
+        if count < 3:
+            continue  # 樣本太少的板塊先濾掉，避免單一股票誤導判斷
+
+        avg_chg5 = sum(x["chg5"] for x in items) / count
+        avg_chg20 = sum(x["chg20"] for x in items) / count
+        group_vol_today = sum(x["volToday"] for x in items)
+        group_vol20avg = sum(x["vol20avg"] for x in items)
+        up_count = sum(1 for x in items if x["dailyPct"] > 0)
+        strong_up_count = sum(1 for x in items if x["dailyPct"] > 5)
+        strong_down_count = sum(1 for x in items if x["dailyPct"] < -5)
+
+        short_strength = avg_chg5 - market_chg5
+        mid_strength = avg_chg20 - market_chg20
+        vol_ratio = (group_vol_today / group_vol20avg) if group_vol20avg > 0 else None
+        breadth = up_count / count
+        strong_up_ratio = strong_up_count / count
+        strong_down_ratio = strong_down_count / count
+
+        long_checks = [
+            short_strength >= 3,
+            mid_strength >= 5,
+            vol_ratio is not None and vol_ratio >= 1.3,
+            breadth >= 0.6,
+            strong_up_ratio >= 0.2,
+        ]
+        short_checks = [
+            short_strength <= -3,
+            mid_strength <= -5,
+            vol_ratio is not None and vol_ratio <= 0.7,
+            breadth <= 0.4,
+            strong_down_ratio >= 0.2,
+        ]
+        long_count = sum(long_checks)
+        short_count = sum(short_checks)
+
+        if long_count >= 3 and long_count >= short_count:
+            direction = "long"
+            match_count = long_count
+        elif short_count >= 3 and short_count > long_count:
+            direction = "short"
+            match_count = short_count
+        else:
+            direction = "neutral"
+            match_count = max(long_count, short_count)
+
+        if match_count == 5:
+            tier = "primary"
+        elif match_count == 4:
+            tier = "strong"
+        elif match_count == 3:
+            tier = "watch"
+        else:
+            tier = "avoid"
+            direction = "neutral"
+
+        dim1 = clamp(short_strength / 20 * 100)
+        dim2 = clamp(mid_strength / 30 * 100)
+        dim3 = clamp(((vol_ratio - 1) * 100) if vol_ratio is not None else 0)
+        dim4 = clamp((breadth - 0.5) * 200)
+        dim5 = clamp((strong_up_ratio - strong_down_ratio) * 500)
+        score = round(dim1 * 0.30 + dim2 * 0.20 + dim3 * 0.20 + dim4 * 0.15 + dim5 * 0.15, 1)
+
+        rows.append({
+            "industry": industry, "count": count,
+            "chg5": round(avg_chg5, 2), "chg20": round(avg_chg20, 2),
+            "shortStrength": round(short_strength, 2), "midStrength": round(mid_strength, 2),
+            "volRatio": round(vol_ratio, 2) if vol_ratio is not None else None,
+            "breadth": round(breadth * 100, 1), "strongUpRatio": round(strong_up_ratio * 100, 1),
+            "strongDownRatio": round(strong_down_ratio * 100, 1),
+            "longMatchCount": long_count, "shortMatchCount": short_count,
+            "direction": direction, "tier": tier, "score": score,
+        })
+
+    rows.sort(key=lambda r: r["score"], reverse=True)
+
+    return {
+        "trade_date": latest_date,
+        "history_days": len(dates_used),
+        "marketChg5": round(market_chg5, 2), "marketChg20": round(market_chg20, 2),
+        "groups": rows,
+        "note": "5項指標全跟大盤比相對強弱：短線強度(5日)、中期強度(20日)、資金進入(量比)、板塊廣度(上漲家數比例)、強勢股集中(單日漲跌>5%家數比例)。5項全符合=主升/主跌板塊，4項=強勢/弱勢板塊，3項=輪動觀察，≤2項=不做。板塊輪動分數的標準化公式是我自己設計的線性縮放版本，不是原始公式，僅供排序參考。",
+    }
+
+
+def save_sector_rotation(data_dir="data"):
+    """把板塊輪動結果存成 data/sector_rotation.json 與帶日期快照，失敗不影響其他資料抓取。"""
+    try:
+        result = compute_sector_rotation(data_dir=data_dir)
+        if result is None:
+            return None
+        out_path = os.path.join(data_dir, "sector_rotation.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        dated_path = os.path.join(data_dir, f"sector_rotation_{result['trade_date']}.json")
+        with open(dated_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        print(f"[板塊輪動] 已寫入 {out_path} 與 {dated_path}，共 {len(result['groups'])} 個板塊有評分")
+        return result
+    except Exception as e:
+        print(f"[板塊輪動] 計算失敗（{e}），略過（不影響個股資料）")
+        return None
+
+
 def save_group_momentum(data_dir="data"):
     """把族群資金流向統計存成 data/group_momentum.json 與帶日期快照，失敗不影響其他資料抓取。"""
     try:
@@ -1606,6 +1798,7 @@ def main():
         save(stocks, date_iso, MI_INDEX_URL.format(date=date_arg), update_latest=False)
         save_market_history(date_iso)
         save_group_momentum()
+        save_sector_rotation()
         r3 = save_screener()
         r4 = save_reversal_screener()
         r5 = save_v2_screener()
@@ -1636,6 +1829,7 @@ def main():
     save(stocks, date_iso, source, update_latest=True)
     save_market_history(date_iso)
     save_group_momentum()
+    save_sector_rotation()
     r3 = save_screener()
     r4 = save_reversal_screener()
     r5 = save_v2_screener()
