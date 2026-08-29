@@ -394,6 +394,20 @@
   </div>
 </div>
 
+<!-- STEP 8 -->
+<div class="section">
+  <div class="step-label">STEP 8 ・ 板塊輪動篩選公式（跟大盤比相對強弱，預判隔日板塊方向）</div>
+
+  <div class="autofetch-box">
+    <div class="hint">讀取 data/sector_rotation.json。5項指標都是跟大盤比較（近20日）：短線強度(5日)、中期強度(20日)、資金進入(量比)、板塊廣度(上漲家數比例)、強勢股集中(單日漲跌&gt;5%家數比例)。5項全符合🔥主升/主跌板塊、4項🟢強勢/弱勢板塊、3項🟡輪動觀察、≤2項🔴不做。「板塊輪動分數」的標準化公式是我自己設計的線性縮放版本（原始公式沒公開精確算法），數字僅供排序參考，不是絕對精準值。</div>
+    <button class="btn btn-primary" onclick="fetchSectorRotation()" style="margin-top:10px;">讀取板塊輪動結果</button>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px;">用最新一筆資料，暫不支援選歷史日期。</div>
+    <div id="sectorStatus" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+  </div>
+
+  <div id="sectorResults"></div>
+</div>
+
 <!-- REFERENCE CARDS -->
 <div class="ref-card">
   <div class="ref-title long">🐂 做多條件（至少符合 5 項才積極操作）</div>
@@ -1645,6 +1659,72 @@ document.getElementById('v4FilterGroup').addEventListener('change', ()=>{ if(las
 document.getElementById('v4FilterSupport').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
 document.getElementById('v4FilterAmp').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
 document.getElementById('v4FilterVolCap').addEventListener('change', ()=>{ if(lastV4Json) renderV4Results(lastV4Json); });
+
+async function fetchSectorRotation(){
+  const statusEl = document.getElementById('sectorStatus');
+  const wrap = document.getElementById('sectorResults');
+  statusEl.textContent = '讀取中…';
+
+  try{
+    const resp = await fetch('data/sector_rotation.json', {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const json = await resp.json();
+    statusEl.textContent = `已讀取 ${json.trade_date||'?'} 板塊輪動結果，大盤5日${json.marketChg5>=0?'+':''}${json.marketChg5}%／20日${json.marketChg20>=0?'+':''}${json.marketChg20}%，共 ${json.groups.length} 個板塊有評分`;
+    renderSectorResults(json);
+  }catch(e){
+    wrap.innerHTML = '';
+    statusEl.textContent = '讀取失敗：'+e.message+'。請確認 fetch_twse.py 已更新並至少成功跑過一次，data/sector_rotation.json 會自動產生。';
+  }
+}
+
+function sectorTierLabel(g){
+  if(g.tier==='primary') return g.direction==='long' ? {emoji:'🔥',text:'主升板塊',cls:'tier-hot'} : {emoji:'🔥',text:'主跌板塊',cls:'tier-cold'};
+  if(g.tier==='strong') return g.direction==='long' ? {emoji:'🟢',text:'強勢板塊',cls:'tier-warm'} : {emoji:'🟢',text:'弱勢板塊',cls:'tier-cold'};
+  if(g.tier==='watch') return {emoji:'🟡',text:'輪動觀察',cls:'tier-warn'};
+  return {emoji:'🔴',text:'不做',cls:'tier-warn'};
+}
+
+function sectorRow(g){
+  const tier = sectorTierLabel(g);
+  const matchCount = g.direction==='short' ? g.shortMatchCount : g.longMatchCount;
+  return `
+    <div class="group-row">
+      <div class="group-row-top">
+        <span class="group-name">${g.industry}</span>
+        <span class="group-score ${tier.cls}">${tier.emoji} ${g.score}分（${matchCount}/5項）</span>
+      </div>
+      <div class="group-detail">${tier.text} ｜ ${g.count}檔</div>
+      <div class="group-detail">短線強度(5日) ${g.shortStrength>=0?'+':''}${g.shortStrength}% ｜ 中期強度(20日) ${g.midStrength>=0?'+':''}${g.midStrength}%</div>
+      <div class="group-detail">量比 ${g.volRatio!==null?g.volRatio+'倍':'—'} ｜ 上漲家數比 ${g.breadth}% ｜ 漲>5%家數比 ${g.strongUpRatio}% ｜ 跌>5%家數比 ${g.strongDownRatio}%</div>
+    </div>
+  `;
+}
+
+function renderSectorResults(json){
+  const wrap = document.getElementById('sectorResults');
+  const groups = json.groups || [];
+  if(groups.length===0){
+    wrap.innerHTML = `<div class="section"><div class="empty">沒有板塊有足夠樣本可以評分。</div></div>`;
+    return;
+  }
+  const bulls = groups.filter(g=>g.direction==='long' && g.tier!=='avoid').slice(0,5);
+  const bears = groups.filter(g=>g.direction==='short' && g.tier!=='avoid').slice().sort((a,b)=>a.score-b.score).slice(0,5);
+
+  let html = `<div class="section">`;
+  html += `<div class="step-label" style="color:var(--long)">🟢 多頭板塊（依分數排序，隔日優先做多方向找標的）</div>`;
+  html += bulls.length ? bulls.map(sectorRow).join('') : `<div class="empty">目前沒有板塊符合3項以上做多條件</div>`;
+  html += `</div>`;
+
+  html += `<div class="section">`;
+  html += `<div class="step-label" style="color:var(--short)">🔴 空頭板塊（依分數排序，隔日優先放空方向找標的）</div>`;
+  html += bears.length ? bears.map(sectorRow).join('') : `<div class="empty">目前沒有板塊符合3項以上放空條件</div>`;
+  html += `</div>`;
+
+  if(json.note){
+    html += `<div class="footer-note">${json.note}</div>`;
+  }
+  wrap.innerHTML = html;
+}
 
 function pctChangeOf(s){
   const close = parseFloat(s.ClosingPrice);
